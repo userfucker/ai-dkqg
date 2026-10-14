@@ -1,0 +1,17 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --color-site-deepseek: #4d6bfe;
+  --color-site-glm: #10b981;
+  --color-site-kimi: #f59e0b;
+  --color-site-qwen: #7c3aed;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100; -webkit-tap-highlight-color: transparent; }
+.prose pre { @apply text-[13px]; }
+.prose :where(table) { @apply block overflow-x-auto; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }

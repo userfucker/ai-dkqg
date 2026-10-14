@@ -1,0 +1,14 @@
+{
+  "name": "ai-dkqg",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI 多方会议中转站：让 DeepSeek、智谱清言、Kimi、千问的网页版（通过浏览器插件 ai-web）一起开会",
+  "scripts": {
+    "setup": "npm ci --prefix backend && npm ci --prefix frontend && npm run build",
+    "build": "npm run build --prefix frontend && npm run build --prefix backend",
+    "start": "node backend/dist/server.mjs",
+    "test": "npm test --prefix backend",
+    "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend"
+  },
+  "engines": { "node": ">=20.0.0" }
+}
