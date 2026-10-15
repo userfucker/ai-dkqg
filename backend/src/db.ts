@@ -109,6 +109,9 @@ function migrate(d: Database.Database): void {
       PRIMARY KEY (site, chat_id)
     );
   `);
+  // 后加的列（旧数据库补上）
+  const cols = (d.prepare(`PRAGMA table_info(meeting_turns)`).all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes("meta_json")) d.exec(`ALTER TABLE meeting_turns ADD COLUMN meta_json TEXT`);
 }
 
 export function getSetting(key: string): string | null {

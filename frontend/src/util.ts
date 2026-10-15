@@ -41,3 +41,66 @@ export function bj(ms: number, withDate = true): string {
   return withDate ? `${s.slice(5, 10)} ${s.slice(11, 16)}` : s.slice(11, 19);
 }
 export const secs = (ms: number | null | undefined) => (ms == null ? "" : ms < 60000 ? `${Math.round(ms / 1000)} 秒` : `${Math.floor(ms / 60000)} 分 ${Math.round((ms % 60000) / 1000)} 秒`);
+
+// ---- 会议页（照 webui 的 MeetingView）
+
+/** 用时："4分0秒" / "12秒" */
+export function formatDuration(ms: number | null): string {
+  if (ms === null || ms === undefined) return "";
+  const s = Math.round(ms / 1000);
+  return s >= 60 ? `${Math.floor(s / 60)}分${s % 60}秒` : `${s}秒`;
+}
+/** 完成时间（北京时间）："2026年10月5日14时21分57秒完成" */
+export function formatFinishedAt(ms: number): string {
+  const d = new Date(ms + 8 * 3600e3);
+  return `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${d.getUTCDate()}日${d.getUTCHours()}时${String(d.getUTCMinutes()).padStart(2, "0")}分${String(d.getUTCSeconds()).padStart(2, "0")}秒完成`;
+}
+/** 会议计时："03:25" / "1:03:25" */
+export function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+/** 每个网站的颜色（发言人名字、卡片边框） */
+export const SITE_CLS: Record<string, { text: string; border: string; bg: string }> = {
+  deepseek: { text: "text-blue-700 dark:text-blue-400", border: "border-blue-300 dark:border-blue-800", bg: "bg-blue-500" },
+  glm: { text: "text-emerald-700 dark:text-emerald-400", border: "border-emerald-300 dark:border-emerald-800", bg: "bg-emerald-500" },
+  kimi: { text: "text-orange-600 dark:text-orange-400", border: "border-orange-300 dark:border-orange-800", bg: "bg-orange-500" },
+  qwen: { text: "text-violet-700 dark:text-violet-400", border: "border-violet-300 dark:border-violet-800", bg: "bg-violet-500" },
+};
+export const siteCls = (site: string | null | undefined) => SITE_CLS[site ?? ""] ?? { text: "text-zinc-700", border: "border-zinc-300", bg: "bg-zinc-400" };
+
+/** 合并稿里某一栏（“## 标题”到下一个“## ”之间） */
+export function draftSection(draft: string, title: string): string | null {
+  const lines = draft.split("\n");
+  const start = lines.findIndex((l) => new RegExp(`^##\\s*${title}`).test(l.trim()));
+  if (start < 0) return null;
+  const out: string[] = [];
+  for (const l of lines.slice(start + 1)) { if (/^#{1,2}\s/.test(l.trim())) break; out.push(l); }
+  return out.join("\n").trim();
+}
+export const isEmptySection = (text: string | null) => !text || /^[（(]?(无|没有|暂无)/.test(text.trim());
+
+/** 去掉 Markdown 符号的纯文字（“复制明文”用） */
+export function markdownToPlainText(md: string): string {
+  return md
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "· ")
+    .replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^>\s?/gm, "")
+    .replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; }
+  // 局域网 http 页面没有 clipboard API：用老办法
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+}

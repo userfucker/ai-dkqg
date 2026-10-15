@@ -73,7 +73,7 @@ export function getMeetingDetail(id: string) {
     turns: getTurns(id).map((t) => ({
       id: t.id, round: t.round, seat: t.seat, kind: t.kind, site: t.site,
       text: isSeat(t.seat) ? displayText(t.text, t.draftVersion) : t.text,
-      status: t.status, draftVersion: t.draftVersion, durationMs: t.durationMs, thinkingLen: t.thinkingLen, attach: t.attach, createdAt: t.createdAt,
+      status: t.status, draftVersion: t.draftVersion, durationMs: t.durationMs, thinkingLen: t.thinkingLen, attach: t.attach, meta: t.meta, createdAt: t.createdAt,
       questions: t.kind === "ask" && hasQuestions(t.text) ? parseQuestions(t.text) : null,
       hasQuestions: t.kind === "ask" ? hasQuestions(t.text) : undefined,
     })),
@@ -413,7 +413,14 @@ export function runCommand(id: string, action: string, payload: Record<string, u
       if (ended) return { ok: false, error: "会议已经结束" };
       if (planFor(id).type !== "await_answers") return { ok: false, error: "现在不是提问环节" };
       const text = typeof payload.text === "string" ? payload.text.trim() : "";
-      insertTurn({ meetingId: id, round: 0, seat: "host", kind: "answer", text: text ? text.slice(0, 50_000) : "（主持人跳过了提问，请按各自写的默认假设进行）" });
+      // 网页上逐题回答时，另外存一份结构化的答案（“提问”那一页用）
+      const answers = payload.answers && typeof payload.answers === "object" ? Object.fromEntries(Object.entries(payload.answers as Record<string, unknown>).filter(([k, v]) => /^[A-D]-\d+$/.test(k) && typeof v === "string" && v.trim()).map(([k, v]) => [k, String(v).slice(0, 5000)])) : null;
+      const extra = typeof payload.extra === "string" ? payload.extra.trim().slice(0, 20000) : "";
+      insertTurn({
+        meetingId: id, round: 0, seat: "host", kind: "answer",
+        text: text ? text.slice(0, 50_000) : "（主持人跳过了提问，请按各自写的默认假设进行）",
+        meta: { skipped: !text, answers: answers ?? {}, extra },
+      });
       if (idle) void advance(id); else notify(id);
       return { ok: true };
     }

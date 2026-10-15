@@ -71,6 +71,7 @@ interface TurnRow {
   duration_ms: number | null;
   thinking_len: number | null;
   attach_json: string | null;
+  meta_json: string | null;
   created_at: number;
 }
 
@@ -79,6 +80,8 @@ export interface FullTurn extends TurnRecord {
   durationMs: number | null;
   thinkingLen: number | null;
   attach: { name: string; lines: number } | null;
+  /** 主持人回答提问时的结构化答案：{ answers: { "A-1": "选项或文字" }, extra } */
+  meta: Record<string, unknown> | null;
   createdAt: number;
 }
 
@@ -147,7 +150,7 @@ function toTurn(r: TurnRow): FullTurn {
     id: r.id, round: r.round, seat: r.seat, kind: r.kind, site: r.site, text: r.text,
     status: r.status_json ? (JSON.parse(r.status_json) as TurnStatus) : null,
     draftVersion: r.draft_version, durationMs: r.duration_ms, thinkingLen: r.thinking_len,
-    attach: r.attach_json ? JSON.parse(r.attach_json) : null, createdAt: r.created_at,
+    attach: r.attach_json ? JSON.parse(r.attach_json) : null, meta: r.meta_json ? JSON.parse(r.meta_json) : null, createdAt: r.created_at,
   };
 }
 
@@ -155,10 +158,10 @@ export function getTurns(id: string): FullTurn[] {
   return (getDb().prepare(`SELECT * FROM meeting_turns WHERE meeting_id = ? ORDER BY id`).all(id) as TurnRow[]).map(toTurn);
 }
 
-export function insertTurn(t: { meetingId: string; round: number; seat: Seat | "host" | "system"; kind: TurnKind; text: string; site?: string | null; status?: TurnStatus | null; durationMs?: number | null; thinkingLen?: number | null; attach?: { name: string; lines: number } | null }): number {
+export function insertTurn(t: { meetingId: string; round: number; seat: Seat | "host" | "system"; kind: TurnKind; text: string; site?: string | null; status?: TurnStatus | null; durationMs?: number | null; thinkingLen?: number | null; attach?: { name: string; lines: number } | null; meta?: Record<string, unknown> | null }): number {
   const r = getDb()
-    .prepare(`INSERT INTO meeting_turns (meeting_id, round, seat, kind, site, text, status_json, duration_ms, thinking_len, attach_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(t.meetingId, t.round, t.seat, t.kind, t.site ?? null, t.text, t.status ? JSON.stringify(t.status) : null, t.durationMs ?? null, t.thinkingLen ?? null, t.attach ? JSON.stringify(t.attach) : null, Date.now());
+    .prepare(`INSERT INTO meeting_turns (meeting_id, round, seat, kind, site, text, status_json, duration_ms, thinking_len, attach_json, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(t.meetingId, t.round, t.seat, t.kind, t.site ?? null, t.text, t.status ? JSON.stringify(t.status) : null, t.durationMs ?? null, t.thinkingLen ?? null, t.attach ? JSON.stringify(t.attach) : null, t.meta ? JSON.stringify(t.meta) : null, Date.now());
   return Number(r.lastInsertRowid);
 }
 

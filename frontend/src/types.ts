@@ -14,6 +14,7 @@ export interface Turn {
   id: number; round: number; seat: Seat | "host" | "system"; kind: string; site: SiteId | null; text: string; status: TurnStatus | null;
   draftVersion: number | null; durationMs: number | null; thinkingLen: number | null; attach: { name: string; lines: number } | null; createdAt: number;
   questions: Question[] | null; hasQuestions?: boolean;
+  meta: { skipped?: boolean; answers?: Record<string, string>; extra?: string } | null;
 }
 export interface Draft { version: number; seat: Seat; turnId: number; content: string }
 export interface Live { seat: Seat; site: SiteId; kind: string; round: number; text: string; thinkingLen: number; startedAt: number; attach: { name: string; lines: number } | null }
