@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api.ts";
+import { usePasteFold } from "../pasteFold.ts";
 import { Button, Card, inputCls, SiteDot } from "../components/ui.tsx";
 import { SEAT_LABEL, SITES, siteName } from "../util.ts";
 import type { BridgeStatus, Prompt, Seat, SiteId } from "../types.ts";
@@ -18,8 +19,9 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
   const [penMode, setPenMode] = useState<"rotate" | "fixed">("rotate");
   const [penSeat, setPenSeat] = useState<Seat>("A");
   const [maxRounds, setMaxRounds] = useState(10);
-  const [wait, setWait] = useState(30);
+  const [wait, setWait] = useState(-1);
   const [busy, setBusy] = useState(false);
+  const fold = usePasteFold(topic, setTopic);
 
   useEffect(() => {
     api<{ prompts: Prompt[] }>("/api/prompts").then((r) => {
@@ -40,7 +42,7 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
     if (order.length < 2) return notify("至少选 2 个 AI", true);
     setBusy(true);
     try {
-      const r = await api<{ id: string }>("/api/meetings", { body: { topic, title: title || undefined, promptId: promptId || null, participants: order, penMode, penSeat, maxRounds, waitSeconds: wait } });
+      const r = await api<{ id: string }>("/api/meetings", { body: { topic: fold.resolve(topic), title: title || undefined, promptId: promptId || null, participants: order, penMode, penSeat, maxRounds, waitSeconds: wait } });
       nav(`/m/${r.id}`);
     } catch (e) { notify((e as Error).message, true); } finally { setBusy(false); }
   };
@@ -56,7 +58,10 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
 
         <Card className="space-y-3 p-4">
           <label className="block text-sm font-medium">议题</label>
-          <textarea className={`${inputCls} min-h-36`} placeholder="要讨论的问题、背景、要求……很长也没关系（超过设置的行数会用 txt 附件发给 AI）" value={topic} onChange={(e) => setTopic(e.target.value)} />
+          <textarea className={`${inputCls} min-h-36`} placeholder="要讨论的问题、背景、要求……很长也没关系（大段粘贴会自动折叠；超过设置的行数会用 txt 附件发给 AI）" value={topic} onChange={(e) => setTopic(e.target.value)} onPaste={fold.onPaste} />
+          {fold.folded > 0 && (
+            <p className="-mt-1 text-xs text-zinc-500">已折叠 {fold.folded} 段粘贴内容，开会时会还原成原文。<button type="button" className="text-blue-600 hover:underline" onClick={() => setTopic(fold.resolve(topic))}>展开</button></p>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium">标题<span className="font-normal text-zinc-500">（可不填，默认取议题第一行）</span></label>

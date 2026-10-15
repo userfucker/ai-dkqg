@@ -7,6 +7,7 @@
  *  - 手机：底部切换“会议列表 / 合并稿 / 过程”
  */
 import { useEffect, useRef, useState } from "react";
+import { usePasteFold } from "../pasteFold.ts";
 import { useNavigate } from "react-router-dom";
 import { api, command as sendCommand } from "../api.ts";
 import { Markdown } from "../components/ui.tsx";
@@ -42,7 +43,7 @@ function lineDiff(a: string, b: string): { type: "same" | "add" | "del"; text: s
 
 export default function MeetingView({ detail: meeting, serverNow, notify, bridge }: { detail: MeetingDetail | null; serverNow: () => number; notify: Notify; bridge: BridgeStatus | null }) {
   const nav = useNavigate();
-  const [selected, setSelected] = useState<number | "qa" | null>(null);
+  const [selected, setSelected] = useState<number | "qa" | "topic" | null>(null);
   const [showDiff, setShowDiff] = useState(false);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [input, setInput] = useState("");
@@ -62,6 +63,9 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
   const middleRef = useRef<HTMLElement>(null);
   useEffect(() => { if (middleRef.current) middleRef.current.scrollTop = 0; }, [meeting?.id, selected, meeting?.drafts.length, meeting?.pauseReason]);
 
+  const inputChangeRef = useRef<(v: string) => void>(setInput);
+  const hostFold = usePasteFold(input, (v) => inputChangeRef.current(v));
+
   if (!meeting) return <div className="p-6 text-sm text-gray-500">加载中……</div>;
 
   const now = serverNow();
@@ -75,12 +79,13 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
   const answerTurn = meeting.turns.find((t) => t.kind === "answer") ?? null;
   const questionsStage = meeting.status === "paused" && meeting.pauseReason === "questions";
   const hasQa = askTurns.some((t) => t.hasQuestions) && !!answerTurn;
-  const shownDraft = typeof selected === "number" ? drafts.find((d) => d.version === selected) ?? latest : selected === "qa" ? null : latest;
+  const shownDraft = typeof selected === "number" ? drafts.find((d) => d.version === selected) ?? latest : selected === "qa" || selected === "topic" ? null : latest;
   const showQa = selected === "qa" || (!latest && hasQa && selected === null);
+  const showTopic = !showQa && !shownDraft;
   const previousDraft = shownDraft ? drafts.find((d) => d.version === shownDraft.version - 1) ?? null : null;
   const diff = showDiff && !showQa && previousDraft && shownDraft ? lineDiff(previousDraft.content, shownDraft.content) : null;
   const isConclusion = ended && shownDraft === latest && !!meeting.finalDraft;
-  const shownContent = isConclusion ? (meeting.finalDraft as string) : shownDraft?.content ?? "";
+  const shownContent = showTopic ? meeting.topic : isConclusion ? (meeting.finalDraft as string) : shownDraft?.content ?? "";
   const countdown = meeting.status === "waiting" && meeting.deadlineAt ? Math.max(0, Math.ceil((meeting.deadlineAt - now) / 1000)) : null;
   const timerRunning = meeting.status === "running" || meeting.status === "waiting";
   const elapsed = meeting.elapsedMs + (meeting.activeSince ? Math.max(0, now - meeting.activeSince) : 0);
@@ -96,10 +101,11 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
     if (value.trim() && !holdingRef.current) { holdingRef.current = true; if (meeting.status === "waiting") void command("hold"); }
     else if (!value.trim() && holdingRef.current) { holdingRef.current = false; if (meeting.status === "paused" && meeting.pauseReason === "typing") void command("release"); }
   };
+  inputChangeRef.current = onInputChange;
   const sendHostInput = async () => {
-    const text = input.trim();
+    const text = hostFold.resolve(input).trim();
     if (!text) return;
-    if (await command("message", { text })) { setInput(""); holdingRef.current = false; }
+    if (await command("message", { text })) { setInput(""); hostFold.reset(); holdingRef.current = false; }
   };
 
   // 结论里“需要主持人测试或确认的事”：结束后提醒一句
@@ -167,7 +173,7 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
 
   // 正在进行的这一轮（current_round 要等这一轮有人发完言才更新）
   const shownRound = Math.max(meeting.currentRound, ...meeting.live.filter((l) => l.kind !== "ask").map((l) => l.round));
-  const draftTitle = showQa ? "提问环节" : !shownDraft ? "合并稿" : `${isConclusion ? "会议结论 · " : ""}合并稿 v${shownDraft.version}（${SEAT_LABEL[shownDraft.seat]}执笔）`;
+  const draftTitle = showQa ? "提问环节" : showTopic ? "议题" : !shownDraft ? "合并稿" : `${isConclusion ? "会议结论 · " : ""}合并稿 v${shownDraft.version}（${SEAT_LABEL[shownDraft.seat]}执笔）`;
   const btn = (on: boolean) => `rounded border px-2 text-sm ${on ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300" : "border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"}`;
 
   return (
@@ -202,11 +208,18 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
         <section ref={middleRef} className={`${mobileTab === "draft" ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto lg:flex lg:flex-[3]`}>
           {banner}
           {questionsStage ? (
-            <QuestionsPanel asks={askTurns} seatName={seatName} onSubmit={(body) => command("answer", body)} />
+            <>
+              <details className="rounded border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+                <summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-300">议题（点击展开全文，共 {meeting.topic.length} 字）</summary>
+                <p className="mt-2 whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">{meeting.topic}</p>
+              </details>
+              <QuestionsPanel asks={askTurns} seatName={seatName} onSubmit={(body) => command("answer", body)} />
+            </>
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className={`font-semibold ${meeting.status === "consensus" && shownDraft === latest && !showQa ? "text-green-700 dark:text-green-400" : "text-gray-900 dark:text-gray-100"}`}>{draftTitle}</h2>
+                <button type="button" className={btn(showTopic)} onClick={() => { setSelected("topic"); setShowDiff(false); }}>议题</button>
                 {hasQa && <button type="button" className={btn(showQa)} onClick={() => { setSelected("qa"); setShowDiff(false); }}>提问</button>}
                 {drafts.map((d) => <button key={d.version} type="button" className={btn(!showQa && shownDraft?.version === d.version)} onClick={() => setSelected(d === latest ? null : d.version)}>v{d.version}</button>)}
                 {previousDraft && !showQa && (
@@ -215,13 +228,11 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
               </div>
               <div className="rounded border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
                 {showQa ? <QaPage asks={askTurns} answer={answerTurn} seatName={seatName} />
-                  : !shownDraft ? (
-                    <div className="text-gray-500">
-                      <p className="mb-2 font-medium text-gray-700 dark:text-gray-300">议题</p>
-                      {meeting.topic.length > 800 ? (
-                        <details><summary className="cursor-pointer whitespace-pre-wrap">{meeting.topic.slice(0, 300)}……（共 {meeting.topic.length} 字，点击展开）</summary><p className="mt-2 whitespace-pre-wrap">{meeting.topic}</p></details>
-                      ) : <p className="whitespace-pre-wrap">{meeting.topic}</p>}
-                      <p className="mt-4 text-sm">开始前各位 AI 会先向你提问（有问题时会议停下来等你回答）；第 1 轮各自独立陈述观点，第 2 轮起执笔人把大家的观点合并成合并稿，显示在这里。</p>
+                  : showTopic ? (
+                    <div>
+                      <div className="mb-3 text-sm text-gray-500">会议风格：{meeting.promptName ?? "不用风格提示词"} · 共 {meeting.topic.length} 字 / {meeting.topic.split("\n").length} 行</div>
+                      <p className="whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">{meeting.topic}</p>
+                      {!latest && <p className="mt-4 text-sm text-gray-500">开始前各位 AI 会先向你提问（有问题时会议停下来等你回答）；第 1 轮各自独立陈述观点，第 2 轮起执笔人把大家的观点合并成合并稿，显示在这里。</p>}
                     </div>
                   ) : diff ? (
                     <pre className="whitespace-pre-wrap font-sans text-sm">
@@ -229,7 +240,7 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
                     </pre>
                   ) : <Markdown text={shownContent} />}
               </div>
-              {shownDraft && !showQa && (
+              {(shownDraft || showTopic) && (
                 <div className="flex items-center gap-3 text-sm text-gray-400">
                   <button type="button" className="hover:text-gray-600 hover:underline" onClick={async () => { await copyText(shownContent); setCopied("md"); setTimeout(() => setCopied(null), 1500); }}>{copied === "md" ? "已复制 ✓" : "📋 复制"}</button>
                   <button type="button" className="hover:text-gray-600 hover:underline" title="复制去掉 Markdown 语法符号后的纯文字（所见即所得）" onClick={async () => { await copyText(markdownToPlainText(shownContent)); setCopied("plain"); setTimeout(() => setCopied(null), 1500); }}>{copied === "plain" ? "已复制 ✓" : "复制明文"}</button>
@@ -307,10 +318,13 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
           <div className="flex gap-2">
             <textarea className="min-h-[44px] flex-1 rounded border border-gray-300 bg-white px-3 py-2 text-base dark:border-gray-700 dark:bg-gray-950" rows={2} value={input}
               placeholder="输入你的想法或指令，所有 AI 都会看到，并在合并稿里逐条回应（Ctrl+Enter 发送）"
-              onChange={(e) => onInputChange(e.target.value)}
+              onChange={(e) => onInputChange(e.target.value)} onPaste={hostFold.onPaste}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void sendHostInput(); } }} />
             <button type="button" className="self-end rounded bg-purple-600 px-4 py-2 text-white hover:bg-purple-700 disabled:opacity-50" onClick={sendHostInput} disabled={!input.trim()}>发送</button>
           </div>
+        )}
+        {canControl && !questionsStage && hostFold.folded > 0 && (
+          <p className="mt-1 text-xs text-gray-500">已折叠 {hostFold.folded} 段粘贴内容，发送时会还原成原文。<button type="button" className="text-blue-600 hover:underline" onClick={() => onInputChange(hostFold.resolve(input))}>展开</button></p>
         )}
       </footer>
 
@@ -329,12 +343,14 @@ function QuestionsPanel({ asks, seatName, onSubmit }: { asks: Turn[]; seatName: 
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [free, setFree] = useState("");
   const [busy, setBusy] = useState(false);
+  const freeFold = usePasteFold(free, setFree);
+  const extra = freeFold.resolve(free).trim();
   const withQuestions = asks.filter((t) => t.hasQuestions !== false);
   const set = (key: string, value: string) => setAnswers((p) => ({ ...p, [key]: value }));
   const composed = (() => {
     const lines: string[] = [];
     for (const t of withQuestions) for (const q of t.questions ?? []) { const v = answers[`${t.seat}-${q.n}`]?.trim(); if (v) lines.push(`${seatName(t.seat as Seat)}的问题 ${q.n}（${q.text}）：${v}`); }
-    if (free.trim()) lines.push(`补充说明：${free.trim()}`);
+    if (extra) lines.push(`补充说明：${extra}`);
     return lines.join("\n");
   })();
   const submit = async (body: Record<string, unknown>) => { setBusy(true); await onSubmit(body); setBusy(false); };
@@ -364,10 +380,11 @@ function QuestionsPanel({ asks, seatName, onSubmit }: { asks: Turn[]; seatName: 
         </div>
       ))}
       {asks.filter((t) => t.hasQuestions === false).length > 0 && <p className="text-sm text-gray-500">{asks.filter((t) => t.hasQuestions === false).map((t) => seatName(t.seat as Seat)).join("、")}没有问题。</p>}
-      <textarea className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-base dark:border-gray-600 dark:bg-gray-950" rows={2} value={free} placeholder="补充说明（可选）：其他背景、要求，或者回答上面没拆开的问题" onChange={(e) => setFree(e.target.value)} />
+      <textarea className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-base dark:border-gray-600 dark:bg-gray-950" rows={2} value={free} placeholder="补充说明（可选）：其他背景、要求，或者回答上面没拆开的问题" onChange={(e) => setFree(e.target.value)} onPaste={freeFold.onPaste} />
+      {freeFold.folded > 0 && <p className="-mt-2 text-xs text-gray-500">已折叠 {freeFold.folded} 段粘贴内容，提交时会还原成原文。<button type="button" className="text-blue-600 hover:underline" onClick={() => setFree(extra)}>展开</button></p>}
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" className="rounded border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300" disabled={busy} onClick={() => submit({ text: "" })}>跳过提问，按默认假设开始</button>
-        <button type="button" className="rounded bg-purple-600 px-4 py-1.5 text-white hover:bg-purple-700 disabled:opacity-50" disabled={busy || !composed.trim()} onClick={() => submit({ text: composed, answers, extra: free })}>提交回答，开始讨论</button>
+        <button type="button" className="rounded bg-purple-600 px-4 py-1.5 text-white hover:bg-purple-700 disabled:opacity-50" disabled={busy || !composed.trim()} onClick={() => submit({ text: composed, answers, extra })}>提交回答，开始讨论</button>
       </div>
     </div>
   );
