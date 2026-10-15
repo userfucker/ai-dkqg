@@ -13,7 +13,7 @@ import { api, command as sendCommand } from "../api.ts";
 import { Markdown } from "../components/ui.tsx";
 import {
   copyText, draftSection, formatDuration, formatElapsed, formatFinishedAt, isEmptySection, KIND_TEXT, markdownToPlainText,
-  SEAT_LABEL, siteCls, siteName, SITES, statusInfo,
+  ACTIVE_SITES, SEAT_LABEL, siteCls, siteName, statusInfo,
 } from "../util.ts";
 import type { BridgeStatus, Draft, MeetingDetail, Question, Seat, Turn } from "../types.ts";
 import type { Notify } from "../App.tsx";
@@ -439,7 +439,7 @@ function MoreMenu({ meeting, ended, seatName, command, notify, onClose }: {
   meeting: MeetingDetail; ended: boolean; seatName: (s: Seat) => string; command: (a: string, p?: Record<string, unknown>) => Promise<boolean>; notify: Notify; onClose: () => void;
 }) {
   const seats = meeting.participants.map((p) => p.seat);
-  const free = SITES.filter((s) => !meeting.participants.some((p) => p.site === s.id));
+  const free = ACTIVE_SITES.filter((s) => !meeting.participants.some((p) => p.site === s.id));
   const [rounds, setRounds] = useState(ended ? meeting.maxRounds + 2 : meeting.maxRounds);
   const [swapSeat, setSwapSeat] = useState<Seat>(seats[0]);
   const [swapSite, setSwapSite] = useState<string>(free[0]?.id ?? "");

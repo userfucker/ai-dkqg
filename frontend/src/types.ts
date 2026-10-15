@@ -19,7 +19,7 @@ export interface Turn {
 export interface Draft { version: number; seat: Seat; turnId: number; content: string }
 export interface Live { seat: Seat; site: SiteId; kind: string; round: number; text: string; thinkingLen: number; startedAt: number; attach: { name: string; lines: number } | null; busy?: boolean }
 export interface MeetingDetail {
-  id: string; title: string; topic: string; promptName: string | null; penMode: "fixed" | "rotate"; penSeat: Seat; nextWriter: Seat | null;
+  id: string; title: string; topic: string; promptId: number | null; promptName: string | null; penMode: "fixed" | "rotate"; penSeat: Seat; nextWriter: Seat | null;
   maxRounds: number; waitSeconds: number; status: string; pauseReason: string | null; pauseDetail: { message?: string } | null; currentRound: number;
   deadlineAt: number | null; finalizeStage: string | null; finalizeReason: string | null; pauseAfter: boolean; finalDraft: string | null; endNote: string | null;
   error: string | null; retryAt: number | null; elapsedMs: number; activeSince: number | null; createdAt: number; updatedAt: number;

@@ -73,7 +73,7 @@ before(async () => {
 after(() => { ext?.close(); server.close(); });
 
 test("三方会议：提问 → 回答 → 独立陈述 → 轮流执笔 + 审阅 → 第 3 轮达成一致", async () => {
-  const r = createAndStart({ topic: "测试议题", promptId: null, promptName: null, promptContent: "", participants: ["deepseek", "kimi", "qwen"], penMode: "rotate", penSeat: "A", maxRounds: 6, waitSeconds: 0 });
+  const r = createAndStart({ topic: "测试议题", promptId: null, promptName: null, promptContent: "", participants: ["deepseek", "kimi", "glm"], penMode: "rotate", penSeat: "A", maxRounds: 6, waitSeconds: 0 });
   assert.ok(r.ok);
   const id = (r as { id: string }).id;
   // 一次只能开一场

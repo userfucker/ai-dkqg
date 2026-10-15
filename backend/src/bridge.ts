@@ -9,7 +9,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { extToken } from "./auth.ts";
-import { SITE_IDS, siteName, type SiteId } from "./sites.ts";
+import { ACTIVE_SITE_IDS, siteName, type SiteId } from "./sites.ts";
 
 export interface SiteState { site: string; name: string; open: boolean; ready: boolean; url?: string; chatId?: string; title?: string }
 export interface BridgeStatus { connected: boolean; name: string | null; version: string | null; since: number | null; sites: SiteState[] }
@@ -77,7 +77,7 @@ class Bridge extends EventEmitter {
   status(): BridgeStatus {
     return {
       connected: this.connected, ...this.info,
-      sites: SITE_IDS.map((s) => ({ site: s, name: siteName(s), open: false, ready: false, ...(this.sites.get(s) || {}) })),
+      sites: ACTIVE_SITE_IDS.map((s) => ({ site: s, name: siteName(s), open: false, ready: false, ...(this.sites.get(s) || {}) })),
     };
   }
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.ts";
 import { Button, Card, SiteDot, StatusBadge } from "../components/ui.tsx";
-import { bj, SEAT_LABEL, SITES } from "../util.ts";
+import { ACTIVE_SITES, bj, SEAT_LABEL } from "../util.ts";
 import type { BridgeStatus, Seat, SiteId } from "../types.ts";
 import type { Notify } from "../App.tsx";
 
@@ -18,7 +18,7 @@ export default function Chats({ notify, bridge }: { notify: Notify; bridge: Brid
         <h1 className="text-lg font-semibold">会话管理</h1>
         <div className="flex flex-wrap gap-1.5">
           <Button kind={tab === "meeting" ? "primary" : "default"} onClick={() => setTab("meeting")}>会议用过的对话</Button>
-          {SITES.map((s) => <Button key={s.id} kind={tab === s.id ? "primary" : "default"} onClick={() => setTab(s.id)}><SiteDot site={s.id} />{s.name} 全部</Button>)}
+          {ACTIVE_SITES.map((s) => <Button key={s.id} kind={tab === s.id ? "primary" : "default"} onClick={() => setTab(s.id)}><SiteDot site={s.id} />{s.name} 全部</Button>)}
         </div>
         {!bridge?.connected && <p className="text-sm text-red-600">插件没连上：可以看记录，但打开、删除和查看网站上的对话要等插件连上。</p>}
         {tab === "meeting" ? <MeetingChats notify={notify} /> : <SiteChats key={tab} site={tab} notify={notify} />}

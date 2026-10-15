@@ -89,7 +89,7 @@ export function createApp(): Hono {
       promptId, promptName: prompt?.name ?? null, promptContent: prompt?.content ?? "",
       participants: Array.isArray(b.participants) ? b.participants.map(String) : [],
       penMode: b.penMode === "fixed" ? "fixed" : "rotate", penSeat: isSeat(b.penSeat) ? b.penSeat : "A",
-      maxRounds: Number(b.maxRounds ?? 10), waitSeconds: Number(b.waitSeconds ?? -1),
+      maxRounds: Number(b.maxRounds ?? 10), waitSeconds: Number(b.waitSeconds ?? 0),
     });
     return r.ok ? c.json(r) : c.json({ error: r.error }, 400);
   });

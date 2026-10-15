@@ -75,7 +75,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         <main className={`min-w-0 flex-1 ${loc.pathname === "/" ? "hidden md:block" : ""}`}>
           <Routes>
             <Route path="/" element={<Empty />} />
-            <Route path="/new" element={<NewMeeting notify={notify} bridge={ev.bridge} />} />
+            <Route path="/new" element={<NewMeeting key={loc.search} notify={notify} bridge={ev.bridge} />} />
             <Route path="/m/:id" element={<MeetingView detail={ev.detail} serverNow={ev.serverNow} notify={notify} bridge={ev.bridge} />} />
             <Route path="/chats" element={<Chats notify={notify} bridge={ev.bridge} />} />
             <Route path="/settings" element={<Settings notify={notify} bridge={ev.bridge} onLogout={onLogout} />} />
@@ -97,8 +97,8 @@ function TopBar({ bridge, online, onLogout: _ }: { bridge: BridgeStatus | null; 
       <NavLink to="/settings" className={nav}>设置</NavLink>
       <Link to="/settings" className="ml-auto flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" title="插件连接状态">
         <span className={`h-2 w-2 rounded-full ${!online ? "bg-zinc-400" : bridge?.connected ? "bg-green-500" : "bg-red-500"}`} />
-        <span className="hidden sm:inline">{!online ? "和中转站断开" : bridge?.connected ? `插件已连接 · ${ready}/4 就绪` : "插件未连接"}</span>
-        <span className="sm:hidden">{bridge?.connected ? `${ready}/4` : "插件"}</span>
+        <span className="hidden sm:inline">{!online ? "和中转站断开" : bridge?.connected ? `插件已连接 · ${ready}/${bridge.sites.length} 就绪` : "插件未连接"}</span>
+        <span className="sm:hidden">{bridge?.connected ? `${ready}/${bridge.sites.length}` : "插件"}</span>
       </Link>
     </header>
   );
@@ -106,13 +106,15 @@ function TopBar({ bridge, online, onLogout: _ }: { bridge: BridgeStatus | null; 
 
 function MeetingList({ meetings, currentId, notify }: { meetings: MeetingSummary[] | null; currentId: string | null; notify: Notify }) {
   const nav = useNavigate();
-  // 右键（手机长按）弹出菜单：删除会议。只删中转站里的记录，不删 AI 网站上的对话，也不再二次确认。
+  // 右键（手机长按）弹出菜单：重新讨论 / 删除会议。删除只删中转站里的记录，不删 AI 网站上的对话。
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const press = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressed = useRef(false);
-  const openMenu = (id: string, x: number, y: number) => setMenu({ id, x: Math.min(x, window.innerWidth - 150), y: Math.min(y, window.innerHeight - 60) });
+  const openMenu = (id: string, x: number, y: number) => setMenu({ id, x: Math.min(x, window.innerWidth - 200), y: Math.min(y, window.innerHeight - 100) });
   const del = async (id: string) => {
     setMenu(null);
+    const m = meetings?.find((x) => x.id === id);
+    if (!window.confirm(`删除会议“${m?.title ?? ""}”的记录？\n（AI 网站上的对话不会删）`)) return;
     try { await api(`/api/meetings/${id}`, { method: "DELETE" }); if (id === currentId) nav("/"); notify("已删除"); } catch (e) { notify((e as Error).message, true); }
   };
   const active = meetings?.find((m) => !["consensus", "finalized", "divergent", "insufficient", "max_rounds", "stopped"].includes(m.status));
@@ -147,7 +149,9 @@ function MeetingList({ meetings, currentId, notify }: { meetings: MeetingSummary
       {menu && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
-          <div className="fixed z-40 w-36 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900" style={{ left: menu.x, top: menu.y }}>
+          <div className="fixed z-40 w-48 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900" style={{ left: menu.x, top: menu.y }}>
+            <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 disabled:text-zinc-400 dark:hover:bg-zinc-800" disabled={!!active} title={active ? "一次只能开一场，先结束正在进行的会议" : "用这场会议的议题和设置新开一场，只需要重新选 AI"}
+              onClick={() => { setMenu(null); nav(`/new?from=${menu.id}`); }}>重新讨论{active ? "（有会议没结束）" : ""}</button>
             <button type="button" className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-zinc-100 dark:hover:bg-zinc-800" onClick={() => del(menu.id)}>删除会议</button>
           </div>
         </>

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api.ts";
 import { usePasteFold } from "../pasteFold.ts";
 import { Button, Card, inputCls, SiteDot } from "../components/ui.tsx";
-import { SEAT_LABEL, SITES, siteName } from "../util.ts";
-import type { BridgeStatus, Prompt, Seat, SiteId } from "../types.ts";
+import { ACTIVE_SITES, SEAT_LABEL, siteName } from "../util.ts";
+import type { BridgeStatus, MeetingDetail, Prompt, Seat, SiteId } from "../types.ts";
 import type { Notify } from "../App.tsx";
 
 const SEATS: Seat[] = ["A", "B", "C", "D"];
@@ -19,17 +19,35 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
   const [penMode, setPenMode] = useState<"rotate" | "fixed">("rotate");
   const [penSeat, setPenSeat] = useState<Seat>("A");
   const [maxRounds, setMaxRounds] = useState(10);
-  const [wait, setWait] = useState(-1);
+  const [wait, setWait] = useState(0);
   const [busy, setBusy] = useState(false);
   const fold = usePasteFold(topic, setTopic);
 
+  // 重新讨论（会议列表右键）：/new?from=<会议 id>，把那场会议的议题和设置带过来，只需要重新选 AI
+  const [params] = useSearchParams();
+  const fromId = params.get("from");
+  const [from, setFrom] = useState<MeetingDetail | null>(null);
+  const [withConclusion, setWithConclusion] = useState(false);
   useEffect(() => {
-    api<{ prompts: Prompt[] }>("/api/prompts").then((r) => {
-      setPrompts(r.prompts);
-      const d = r.prompts.find((p) => p.is_default);
+    (async () => {
+      let list: Prompt[] = [];
+      try { list = (await api<{ prompts: Prompt[] }>("/api/prompts")).prompts; setPrompts(list); } catch { /* 没有风格也能开 */ }
+      if (fromId) {
+        try {
+          const { meeting: m } = await api<{ meeting: MeetingDetail }>(`/api/meetings/${fromId}`);
+          setFrom(m);
+          setTopic(m.topic); setTitle(m.title);
+          setPromptId(m.promptId && list.some((p) => p.id === m.promptId) ? m.promptId : "");
+          setPenMode(m.penMode); setMaxRounds(m.maxRounds); setWait(m.waitSeconds);
+          setOrder([]);
+          return;
+        } catch (e) { notify("读取原会议失败：" + (e as Error).message, true); }
+      }
+      const d = list.find((p) => p.is_default);
       if (d) setPromptId(d.id);
-    }).catch(() => {});
-  }, []);
+    })();
+  }, [fromId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const conclusion = from ? from.finalDraft ?? from.drafts.at(-1)?.content ?? "" : "";
 
   const toggle = (s: SiteId) => setOrder((o) => (o.includes(s) ? o.filter((x) => x !== s) : o.length >= 4 ? o : [...o, s]));
   const move = (i: number, d: -1 | 1) => setOrder((o) => { const n = [...o]; const j = i + d; if (j < 0 || j >= n.length) return o; [n[i], n[j]] = [n[j], n[i]]; return n; });
@@ -42,7 +60,7 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
     if (order.length < 2) return notify("至少选 2 个 AI", true);
     setBusy(true);
     try {
-      const r = await api<{ id: string }>("/api/meetings", { body: { topic: fold.resolve(topic), title: title || undefined, promptId: promptId || null, participants: order, penMode, penSeat, maxRounds, waitSeconds: wait } });
+      const r = await api<{ id: string }>("/api/meetings", { body: { topic: fold.resolve(topic) + (withConclusion && conclusion ? `\n\n【上次讨论的结论（供参考）】\n${conclusion}` : ""), title: title || undefined, promptId: promptId || null, participants: order, penMode, penSeat, maxRounds, waitSeconds: wait } });
       nav(`/m/${r.id}`);
     } catch (e) { notify((e as Error).message, true); } finally { setBusy(false); }
   };
@@ -53,9 +71,16 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
       <div className="mx-auto max-w-2xl space-y-4 p-4 pb-24">
         <div className="flex items-center gap-2">
           <Button kind="ghost" className="md:hidden" onClick={() => nav("/")}>‹ 返回</Button>
-          <h1 className="text-lg font-semibold">新建 AI 会议</h1>
+          <h1 className="text-lg font-semibold">{from ? "重新讨论" : "新建 AI 会议"}</h1>
         </div>
 
+        {from && (
+          <Card className="space-y-1 border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
+            <p>已载入“{from.title}”的议题和设置，选好参会的 AI 就可以开始。</p>
+            {from.promptName && promptId === "" && <p>原来的会议风格“{from.promptName}”已经删除，这次不用风格提示词（可以重新选）。</p>}
+            {conclusion && <label className="flex items-center gap-1.5"><input type="checkbox" checked={withConclusion} onChange={(e) => setWithConclusion(e.target.checked)} />把上次讨论的结论附在议题后面（供参考）</label>}
+          </Card>
+        )}
         <Card className="space-y-3 p-4">
           <label className="block text-sm font-medium">议题</label>
           <textarea className={`${inputCls} min-h-36`} placeholder="要讨论的问题、背景、要求……很长也没关系（大段粘贴会自动折叠；超过设置的行数会用 txt 附件发给 AI）" value={topic} onChange={(e) => setTopic(e.target.value)} onPaste={fold.onPaste} />
@@ -78,9 +103,9 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
         </Card>
 
         <Card className="space-y-3 p-4">
-          <div className="text-sm font-medium">参会的 AI <span className="font-normal text-zinc-500">（2～4 个，按点选顺序排成甲乙丙丁）</span></div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {SITES.map((s) => {
+          <div className="text-sm font-medium">参会的 AI <span className="font-normal text-zinc-500">（2～3 个，按点选顺序排成甲乙丙）</span></div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {ACTIVE_SITES.map((s) => {
               const i = order.indexOf(s.id);
               const st = site(s.id);
               return (

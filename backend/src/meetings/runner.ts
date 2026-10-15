@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { bridge, type Progress } from "../bridge.ts";
 import { broadcastAll, broadcastMeeting, viewerCount } from "../events.ts";
 import { getSetting } from "../db.ts";
-import { isSite, siteName, type SiteId } from "../sites.ts";
+import { isActiveSite, siteName, type SiteId } from "../sites.ts";
 import {
   ALL_SEATS, SEAT_LABEL, buildAskMessage, buildConfirmMessage, buildFinalWriteMessage, buildOpeningMessage, buildReviewMessage, buildWriteMessage,
   displayText, estimateCalls, evaluateRound, extractDraft, hasQuestions, hostAfter, isSeat, isStagnant, lastRoundDissent, openingsInsufficient,
@@ -66,7 +66,7 @@ export function getMeetingDetail(id: string) {
   const parts = getParticipants(id);
   const r = runtimes.get(id);
   return {
-    id: m.id, title: m.title, topic: m.topic, promptName: m.prompt_name, penMode: m.pen_mode, penSeat: m.pen_seat, nextWriter: m.next_writer,
+    id: m.id, title: m.title, topic: m.topic, promptId: m.prompt_id, promptName: m.prompt_name, penMode: m.pen_mode, penSeat: m.pen_seat, nextWriter: m.next_writer,
     maxRounds: m.max_rounds, waitSeconds: m.wait_seconds, status: m.status, pauseReason: m.pause_reason,
     pauseDetail: m.pause_detail ? JSON.parse(m.pause_detail) : null, currentRound: m.current_round, deadlineAt: m.deadline_at,
     finalizeStage: m.finalize_stage, finalizeReason: m.finalize_reason, pauseAfter: !!m.pause_after, finalDraft: m.final_draft, endNote: m.end_note,
@@ -380,7 +380,7 @@ export function createAndStart(input: CreateInput): { ok: true; id: string } | {
   if (!topic) return { ok: false, error: "议题不能为空" };
   const sites = input.participants;
   if (sites.length < 2 || sites.length > 4) return { ok: false, error: "参会的 AI 要 2 到 4 个" };
-  if (!sites.every(isSite)) return { ok: false, error: "有不认识的网站" };
+  if (!sites.every(isActiveSite)) return { ok: false, error: "有不认识或已停用的网站（千问已停用）" };
   if (new Set(sites).size !== sites.length) return { ok: false, error: "同一个网站只能参会一次" };
   if (!Number.isInteger(input.maxRounds) || input.maxRounds < 2 || input.maxRounds > 30) return { ok: false, error: "最大轮数要在 2 到 30 之间" };
   if (![0, 30, 60, -1].includes(input.waitSeconds)) return { ok: false, error: "每轮等待只能选 0、30、60 秒或一直等" };
@@ -513,7 +513,7 @@ export function runCommand(id: string, action: string, payload: Record<string, u
     case "set_site": {
       // 给某个席位换 AI：新网站开一个新对话，第一次发言时把之前的会议记录一起发过去。
       const seat = isSeat(payload.seat) && seats.includes(payload.seat) ? payload.seat : null;
-      const site = isSite(payload.site) ? payload.site : null;
+      const site = isActiveSite(payload.site) ? payload.site : null;
       if (!seat || !site) return { ok: false, error: "请选择席位和网站" };
       if (r.running) return { ok: false, error: "请等这一轮发言结束再换 AI" };
       if (ended) return { ok: false, error: "会议已经结束" };

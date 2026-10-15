@@ -4,6 +4,8 @@ export const SEAT_LABEL: Record<Seat, string> = { A: "甲", B: "乙", C: "丙", 
 export const SITES: { id: SiteId; name: string }[] = [
   { id: "deepseek", name: "DeepSeek" }, { id: "glm", name: "智谱清言" }, { id: "kimi", name: "Kimi" }, { id: "qwen", name: "千问" },
 ];
+/** 能参会的网站（千问已停用：消息超过一万多字就用不了） */
+export const ACTIVE_SITES = SITES.filter((s) => s.id !== "qwen");
 export const siteName = (s: string | null | undefined) => SITES.find((x) => x.id === s)?.name ?? s ?? "";
 export const SITE_COLOR: Record<string, string> = { deepseek: "#4d6bfe", glm: "#10b981", kimi: "#f59e0b", qwen: "#7c3aed" };
 
