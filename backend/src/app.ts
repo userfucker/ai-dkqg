@@ -22,7 +22,7 @@ import { setSetting } from "./db.ts";
 import { isSite, SITE_IDS, siteName, type SiteId } from "./sites.ts";
 import { deletePrompt, getPrompt, listPrompts, savePrompt } from "./prompts.ts";
 import { meetingRules, isSeat, ALL_SEATS } from "./meetings/protocol.ts";
-import { attachLines, createAndStart, getMeetingDetail, meetingSummary, runCommand } from "./meetings/runner.ts";
+import { attachLines, broadcastList, createAndStart, getMeetingDetail, meetingSummary, runCommand, viewerLeft } from "./meetings/runner.ts";
 import { deleteMeeting, getMeeting, isEnded, listChats, listMeetings, markChatDeleted } from "./meetings/store.ts";
 import { minutesMarkdown } from "./meetings/minutes.ts";
 
@@ -61,7 +61,9 @@ export function createApp(): Hono {
     streamSSE(c, async (stream) => {
       const meetingId = c.req.query("meeting") || null;
       const send = (event: string, data: unknown) => { void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {}); };
-      const remove = addViewer({ meetingId, send });
+      const removeViewer = addViewer({ meetingId, send });
+      let left = false;
+      const remove = () => { if (left) return; left = true; removeViewer(); if (meetingId) viewerLeft(meetingId); };
       stream.onAbort(remove);
       send("bridge", bridge.status());
       send("meetings", listMeetings().map(meetingSummary));
@@ -108,6 +110,7 @@ export function createApp(): Hono {
     let chatResult: unknown = null;
     if (c.req.query("deleteChats") === "1") chatResult = await deleteChats(listChats().filter((x) => x.meeting_id === id && !x.deleted_at).map((x) => ({ site: x.site, chatId: x.chat_id })));
     deleteMeeting(id);
+    broadcastList();
     return c.json({ ok: true, chats: chatResult });
   });
   app.get("/api/meetings/:id/minutes", (c) => {

@@ -17,7 +17,7 @@ export interface Turn {
   meta: { skipped?: boolean; answers?: Record<string, string>; extra?: string } | null;
 }
 export interface Draft { version: number; seat: Seat; turnId: number; content: string }
-export interface Live { seat: Seat; site: SiteId; kind: string; round: number; text: string; thinkingLen: number; startedAt: number; attach: { name: string; lines: number } | null }
+export interface Live { seat: Seat; site: SiteId; kind: string; round: number; text: string; thinkingLen: number; startedAt: number; attach: { name: string; lines: number } | null; busy?: boolean }
 export interface MeetingDetail {
   id: string; title: string; topic: string; promptName: string | null; penMode: "fixed" | "rotate"; penSeat: Seat; nextWriter: Seat | null;
   maxRounds: number; waitSeconds: number; status: string; pauseReason: string | null; pauseDetail: { message?: string } | null; currentRound: number;

@@ -21,8 +21,8 @@ export function useEvents(meetingId: string | null) {
       setDetail(d);
     });
     es.addEventListener("live", (e) => {
-      const l = JSON.parse((e as MessageEvent).data) as { seat: Seat; text: string; thinkingLen: number };
-      setDetail((d) => (d ? { ...d, live: d.live.map((x) => (x.seat === l.seat ? { ...x, text: l.text, thinkingLen: l.thinkingLen } : x)) } : d));
+      const l = JSON.parse((e as MessageEvent).data) as { seat: Seat; text: string; thinkingLen: number; busy?: boolean };
+      setDetail((d) => (d ? { ...d, live: d.live.map((x) => (x.seat === l.seat ? { ...x, text: l.text, thinkingLen: l.thinkingLen, busy: l.busy } : x)) } : d));
     });
     return () => es.close();
   }, [meetingId]);

@@ -265,6 +265,7 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
                   <span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
                   {seatName(seat)}正在{KIND_LABEL[info.kind] ?? "发言"}……（{seconds} 秒）{info.thinkingLen > 0 ? `　思考 ${info.thinkingLen} 字` : ""}{info.attach ? `　附件 ${info.attach.lines} 行` : ""}
                 </p>
+                {info.busy && <p className="mb-1 text-sm text-amber-600 dark:text-amber-400">网站显示服务火爆，正在排队，轮到后会自动回复（最多再等 30 分钟）</p>}
                 <p className="max-h-60 overflow-y-auto whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-300">{info.text.replace(/<会议状态>[\s\S]*$/, "") || "思考中……"}</p>
               </div>
             );
@@ -304,7 +305,7 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
             {canControl && <button type="button" className="rounded border border-red-300 px-3 py-1.5 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950" onClick={() => { if (window.confirm("确定要终止这场会议吗？")) void command("stop"); }}>终止</button>}
             <div className="relative">
               <button type="button" className="rounded border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800" onClick={() => setMenuOpen((v) => !v)}>更多 ▾</button>
-              {menuOpen && <MoreMenu meeting={meeting} ended={ended} seatName={seatName} command={command} notify={notify} onClose={() => setMenuOpen(false)} onDeleted={() => nav("/")} />}
+              {menuOpen && <MoreMenu meeting={meeting} ended={ended} seatName={seatName} command={command} notify={notify} onClose={() => setMenuOpen(false)} />}
             </div>
           </div>
         </div>
@@ -433,9 +434,9 @@ function AskList({ asks, answers, seatName }: { asks: Turn[]; answers: Record<st
   );
 }
 
-/** “更多”菜单：执笔、轮数、等待时间、换 AI、打开某个 AI 的对话、导出纪要、删除会议。 */
-function MoreMenu({ meeting, ended, seatName, command, notify, onClose, onDeleted }: {
-  meeting: MeetingDetail; ended: boolean; seatName: (s: Seat) => string; command: (a: string, p?: Record<string, unknown>) => Promise<boolean>; notify: Notify; onClose: () => void; onDeleted: () => void;
+/** “更多”菜单：执笔、轮数、等待时间、换 AI、打开某个 AI 的对话、导出纪要。（删除会议：在左边会议列表上右键 / 手机长按） */
+function MoreMenu({ meeting, ended, seatName, command, notify, onClose }: {
+  meeting: MeetingDetail; ended: boolean; seatName: (s: Seat) => string; command: (a: string, p?: Record<string, unknown>) => Promise<boolean>; notify: Notify; onClose: () => void;
 }) {
   const seats = meeting.participants.map((p) => p.seat);
   const free = SITES.filter((s) => !meeting.participants.some((p) => p.site === s.id));
@@ -444,11 +445,6 @@ function MoreMenu({ meeting, ended, seatName, command, notify, onClose, onDelete
   const [swapSite, setSwapSite] = useState<string>(free[0]?.id ?? "");
   const item = "block w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800";
   const small = (on: boolean) => `rounded border px-2 py-0.5 text-xs ${on ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300" : "border-gray-300 dark:border-gray-600"}`;
-  const del = async () => {
-    if (!window.confirm("删除这场会议的记录？")) return;
-    const chats = meeting.participants.some((p) => p.chatId) && window.confirm("要不要同时删除这场会议在各网站上用过的对话？\n确定 = 一起删；取消 = 只删记录");
-    try { await api(`/api/meetings/${meeting.id}${chats ? "?deleteChats=1" : ""}`, { method: "DELETE" }); onDeleted(); } catch (e) { notify((e as Error).message, true); }
-  };
   const openChat = async (site: string, chatId: string) => { try { await api("/api/chats/open", { body: { site, chatId } }); notify("已在电脑的浏览器里打开"); } catch (e) { notify((e as Error).message, true); } };
   return (
     <>
@@ -494,7 +490,6 @@ function MoreMenu({ meeting, ended, seatName, command, notify, onClose, onDelete
         <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
         {meeting.participants.filter((p) => p.chatId).map((p) => <button key={p.seat} className={item} onClick={() => openChat(p.site, p.chatId as string)}>在浏览器里打开{seatName(p.seat)}的对话</button>)}
         <a className={item} href={`/api/meetings/${meeting.id}/minutes`}>导出会议纪要（Markdown）</a>
-        <button className={`${item} text-red-600`} onClick={del}>删除会议</button>
       </div>
     </>
   );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useMatch, useNavigate } from "react-router-dom";
 import { api } from "./api.ts";
 import { useEvents, useTitleFlash } from "./events.ts";
@@ -69,7 +69,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
       <div className="flex min-h-0 flex-1">
         {meetingPage && (
           <aside className={`${loc.pathname === "/" ? "flex" : "hidden"} w-full flex-col border-zinc-200 md:flex md:w-72 md:shrink-0 md:border-r dark:border-zinc-800`}>
-            <MeetingList meetings={ev.meetings} currentId={meetingId} />
+            <MeetingList meetings={ev.meetings} currentId={meetingId} notify={notify} />
           </aside>
         )}
         <main className={`min-w-0 flex-1 ${loc.pathname === "/" ? "hidden md:block" : ""}`}>
@@ -104,8 +104,17 @@ function TopBar({ bridge, online, onLogout: _ }: { bridge: BridgeStatus | null; 
   );
 }
 
-function MeetingList({ meetings, currentId }: { meetings: MeetingSummary[] | null; currentId: string | null }) {
+function MeetingList({ meetings, currentId, notify }: { meetings: MeetingSummary[] | null; currentId: string | null; notify: Notify }) {
   const nav = useNavigate();
+  // 右键（手机长按）弹出菜单：删除会议。只删中转站里的记录，不删 AI 网站上的对话，也不再二次确认。
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const press = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressed = useRef(false);
+  const openMenu = (id: string, x: number, y: number) => setMenu({ id, x: Math.min(x, window.innerWidth - 150), y: Math.min(y, window.innerHeight - 60) });
+  const del = async (id: string) => {
+    setMenu(null);
+    try { await api(`/api/meetings/${id}`, { method: "DELETE" }); if (id === currentId) nav("/"); notify("已删除"); } catch (e) { notify((e as Error).message, true); }
+  };
   const active = meetings?.find((m) => !["consensus", "finalized", "divergent", "insufficient", "max_rounds", "stopped"].includes(m.status));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -117,7 +126,13 @@ function MeetingList({ meetings, currentId }: { meetings: MeetingSummary[] | nul
         {meetings === null && <p className="p-3 text-sm text-zinc-500">加载中…</p>}
         {meetings?.length === 0 && <p className="p-3 text-sm text-zinc-500">还没有会议</p>}
         {meetings?.map((m) => (
-          <Link key={m.id} to={`/m/${m.id}`} className={`mb-1 block rounded-lg px-3 py-2.5 ${m.id === currentId ? "bg-zinc-200 dark:bg-zinc-800" : "hover:bg-zinc-100 dark:hover:bg-zinc-900"}`}>
+          <Link key={m.id} to={`/m/${m.id}`}
+            onContextMenu={(e) => { e.preventDefault(); openMenu(m.id, e.clientX, e.clientY); }}
+            onTouchStart={(e) => { const t = e.touches[0]; longPressed.current = false; press.current = setTimeout(() => { longPressed.current = true; openMenu(m.id, t.clientX, t.clientY); }, 550); }}
+            onClick={(e) => { if (longPressed.current) { e.preventDefault(); longPressed.current = false; } }}
+            onTouchEnd={() => { if (press.current) clearTimeout(press.current); }} onTouchMove={() => { if (press.current) clearTimeout(press.current); }}
+            style={{ WebkitTouchCallout: "none" }}
+            className={`mb-1 block rounded-lg px-3 py-2.5 ${m.id === currentId ? "bg-zinc-200 dark:bg-zinc-800" : "hover:bg-zinc-100 dark:hover:bg-zinc-900"}`}>
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{m.title}</span>
               <StatusBadge status={m.status} pauseReason={m.pauseReason} />
@@ -129,6 +144,14 @@ function MeetingList({ meetings, currentId }: { meetings: MeetingSummary[] | nul
           </Link>
         ))}
       </div>
+      {menu && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
+          <div className="fixed z-40 w-36 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900" style={{ left: menu.x, top: menu.y }}>
+            <button type="button" className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-zinc-100 dark:hover:bg-zinc-800" onClick={() => del(menu.id)}>删除会议</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -16,7 +16,7 @@ export interface BridgeStatus { connected: boolean; name: string | null; version
 
 interface Pending { resolve: (d: CallResult) => void; onProgress?: (p: Progress) => void; timer: ReturnType<typeof setTimeout> }
 export interface CallResult { ok: boolean; data: Record<string, unknown> & { error?: string } }
-export interface Progress { answer: string; thinkingLen: number; done: boolean }
+export interface Progress { answer: string; thinkingLen: number; done: boolean; busy: boolean }
 
 class Bridge extends EventEmitter {
   private ws: WebSocket | null = null;
@@ -52,7 +52,7 @@ class Bridge extends EventEmitter {
       if (!authed) return;
       if (m.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: m.t })); return; }
       if (m.type === "event" && m.event === "tab" && m.site) { this.sites.set(m.site, m.data); this.emit("status"); return; }
-      if (m.type === "progress") { const p = this.pending.get(m.id); p?.onProgress?.({ answer: m.answer ?? "", thinkingLen: m.thinkingLen ?? 0, done: !!m.done }); return; }
+      if (m.type === "progress") { const p = this.pending.get(m.id); p?.onProgress?.({ answer: m.answer ?? "", thinkingLen: m.thinkingLen ?? 0, done: !!m.done, busy: !!m.busy }); return; }
       if (m.type === "result") {
         const p = this.pending.get(m.id);
         if (!p) return;

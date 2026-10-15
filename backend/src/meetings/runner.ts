@@ -13,7 +13,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { bridge, type Progress } from "../bridge.ts";
-import { broadcastAll, broadcastMeeting } from "../events.ts";
+import { broadcastAll, broadcastMeeting, viewerCount } from "../events.ts";
 import { getSetting } from "../db.ts";
 import { isSite, siteName, type SiteId } from "../sites.ts";
 import {
@@ -29,7 +29,7 @@ import {
 
 // ---- 进程内状态 ---------------------------------------------------------------
 
-interface LiveTurn { seat: Seat; site: string; kind: TurnKind; round: number; text: string; thinkingLen: number; startedAt: number; attach: { name: string; lines: number } | null }
+interface LiveTurn { seat: Seat; site: string; kind: TurnKind; round: number; text: string; thinkingLen: number; startedAt: number; attach: { name: string; lines: number } | null; busy?: boolean }
 interface Runtime { timer: ReturnType<typeof setTimeout> | null; running: boolean; live: Map<Seat, LiveTurn> }
 const runtimes = new Map<string, Runtime>();
 function rt(id: string): Runtime {
@@ -40,6 +40,8 @@ function rt(id: string): Runtime {
 
 const RETRY_MS = 10 * 60_000;
 const ASK_TIMEOUT = 10 * 60_000;
+/** 网站“服务火爆 / 排队”时插件会接着等，最多再等这么久（插件 1.1.2 起） */
+const BUSY_MAX = 30 * 60_000;
 export const attachLines = () => Number(getSetting("attach_lines") || 100);
 
 // ---- 给网页的数据 -------------------------------------------------------------
@@ -85,6 +87,10 @@ export function getMeetingDetail(id: string) {
   };
 }
 export type MeetingDetail = NonNullable<ReturnType<typeof getMeetingDetail>>;
+
+export function broadcastList(): void {
+  broadcastAll("meetings", listMeetings().map(meetingSummary));
+}
 
 function notify(id: string): void {
   const d = getMeetingDetail(id);
@@ -250,10 +256,12 @@ function endMeeting(id: string, status: MeetingStatus, draft: DraftRecord | null
 
 interface TurnResult { ok: boolean; turnId?: number; error?: string; disconnected?: boolean; seat?: Seat }
 
-const RETRY_RE = /额度|限流|频繁|繁忙|稍后再试|稍后重试|太多|上限|次数|拥挤|服务器忙|忙碌|busy|rate|limit|429|too many|overload/i;
+const RETRY_RE = /火爆|排队|额度|限流|频繁|繁忙|稍后再试|稍后重试|太多|上限|次数|拥挤|服务器忙|忙碌|busy|rate|limit|429|too many|overload/i;
 
 /** 发言失败：插件断开 → 等插件；网站限流 → 10 分钟后自动重试；其他 → 出错。 */
 function failTurn(id: string, res: TurnResult): void {
+  const cur = getMeeting(id);
+  if (!cur || isEnded(cur.status)) return; // 会议已经终止 / 删除
   const who = res.seat ? `${SEAT_LABEL[res.seat]}（${siteName(getParticipants(id).find((p) => p.seat === res.seat)?.site ?? "")}）` : "";
   const error = `${who}发言失败：${res.error ?? "未知错误"}`;
   if (res.disconnected || !bridge.connected) { pause(id, "no_ext", { message: error }); return; }
@@ -321,7 +329,8 @@ async function runTurn(id: string, seat: Seat, kind: TurnKind, round: number, re
     if (!live) return;
     live.text = p.answer;
     live.thinkingLen = p.thinkingLen;
-    broadcastMeeting(id, "live", { seat, text: p.answer, thinkingLen: p.thinkingLen });
+    live.busy = p.busy;
+    broadcastMeeting(id, "live", { seat, text: p.answer, thinkingLen: p.thinkingLen, busy: p.busy });
   });
   r.live.delete(seat);
   if (!res.ok) return { ok: false, error: res.error, disconnected: res.disconnected, seat };
@@ -355,7 +364,7 @@ async function askAI(p: ParticipantRow, text: string, files: { name: string; con
       if (!o.ok) return fail({ ...o.data, error: `切回会议的对话失败：${o.data.error ?? ""}` });
     }
   }
-  const r = await bridge.call(site, "ask", { text, files, newChat: !p.chat_id, timeoutMs: ASK_TIMEOUT }, { timeoutMs: ASK_TIMEOUT + 300_000, onProgress });
+  const r = await bridge.call(site, "ask", { text, files, newChat: !p.chat_id, timeoutMs: ASK_TIMEOUT }, { timeoutMs: ASK_TIMEOUT + BUSY_MAX + 300_000, onProgress });
   if (!r.ok) return fail(r.data);
   const answer = String(r.data.answer ?? "");
   if (!answer.trim()) return fail({ error: "AI 没有返回任何内容" });
@@ -559,6 +568,13 @@ export function recoverOnStartup(): void {
 }
 
 /** 测试用：等当前这一步跑完。 */
+/** 网页关掉了（这场会议没人在看）：如果是“主持人正在输入”停住的，恢复倒计时，会议在后台接着开。 */
+export function viewerLeft(id: string): void {
+  if (viewerCount(id) > 0) return;
+  const m = getMeeting(id);
+  if (m && m.status === "paused" && m.pause_reason === "typing") startCheckpoint(id);
+}
+
 export async function waitIdle(id: string, timeoutMs = 20_000): Promise<void> {
   const start = Date.now();
   while (rt(id).running || getMeeting(id)?.status === "running") {
