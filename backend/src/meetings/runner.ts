@@ -39,6 +39,8 @@ function rt(id: string): Runtime {
 }
 
 const RETRY_MS = 10 * 60_000;
+/** 发言失败后隔多久重试那一次 */
+export const RETRY_DELAY = Number(process.env.AID_RETRY_DELAY_MS ?? 5000);
 const ASK_TIMEOUT = 10 * 60_000;
 /** 网站“服务火爆 / 排队”时插件会接着等，最多再等这么久（插件 1.1.2 起） */
 const BUSY_MAX = 30 * 60_000;
@@ -56,7 +58,7 @@ export function meetingSummary(m: MeetingRow) {
   const parts = getParticipants(m.id);
   return {
     id: m.id, title: m.title, status: m.status, pauseReason: m.pause_reason, currentRound: m.current_round, maxRounds: m.max_rounds,
-    participants: parts.map((p) => ({ seat: p.seat, site: p.site })), createdAt: m.created_at, updatedAt: m.updated_at,
+    participants: parts.map((p) => ({ seat: p.seat, site: p.site, dropped: !!p.dropped })), createdAt: m.created_at, updatedAt: m.updated_at,
   };
 }
 
@@ -71,7 +73,7 @@ export function getMeetingDetail(id: string) {
     pauseDetail: m.pause_detail ? JSON.parse(m.pause_detail) : null, currentRound: m.current_round, deadlineAt: m.deadline_at,
     finalizeStage: m.finalize_stage, finalizeReason: m.finalize_reason, pauseAfter: !!m.pause_after, finalDraft: m.final_draft, endNote: m.end_note,
     error: m.error, retryAt: m.retry_at, elapsedMs: m.elapsed_ms, activeSince: m.active_since, createdAt: m.created_at, updatedAt: m.updated_at,
-    participants: parts.map((p) => ({ seat: p.seat, site: p.site, name: siteName(p.site), chatId: p.chat_id, chatUrl: p.chat_url })),
+    participants: parts.map((p) => ({ seat: p.seat, site: p.site, name: siteName(p.site), chatId: p.chat_id, chatUrl: p.chat_url, dropped: !!p.dropped })),
     turns: getTurns(id).map((t) => ({
       id: t.id, round: t.round, seat: t.seat, kind: t.kind, site: t.site,
       text: isSeat(t.seat) ? displayText(t.text, t.draftVersion) : t.text,
@@ -162,7 +164,39 @@ export async function advance(id: string): Promise<void> {
 }
 
 const latestDraftOf = (id: string): DraftRecord | null => getDrafts(id).at(-1) ?? null;
-const seatsOf = (id: string): Seat[] => getParticipants(id).map((p) => p.seat).sort((a, b) => ALL_SEATS.indexOf(a) - ALL_SEATS.indexOf(b));
+const bySeat = (a: Seat, b: Seat) => ALL_SEATS.indexOf(a) - ALL_SEATS.indexOf(b);
+/** 还在参会的席位（被跳过的不算） */
+const seatsOf = (id: string): Seat[] => getParticipants(id).filter((p) => !p.dropped).map((p) => p.seat).sort(bySeat);
+const allSeatsOf = (id: string): Seat[] => getParticipants(id).map((p) => p.seat).sort(bySeat);
+const seatWho = (id: string, seat: Seat) => `${SEAT_LABEL[seat]}（${siteName(getParticipants(id).find((p) => p.seat === seat)?.site ?? "")}）`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 发言失败先重试一次；还失败就跳过这个 AI（插件断开不算，那是等插件）。 */
+async function runTurnRetry(id: string, seat: Seat, kind: TurnKind, round: number, reason: FinalizeReason | null = null): Promise<TurnResult> {
+  let res = await runTurn(id, seat, kind, round, reason);
+  const hard = (x: TurnResult) => x.ok || x.disconnected || !bridge.connected || stoppedMeanwhile(id);
+  if (hard(res)) return res;
+  insertTurn({ meetingId: id, round, seat: "system", kind: "notice", text: `${seatWho(id, seat)}发言失败：${res.error ?? "未知错误"}。5 秒后重试一次` });
+  notify(id);
+  await sleep(RETRY_DELAY);
+  if (stoppedMeanwhile(id)) return res;
+  res = await runTurn(id, seat, kind, round, reason);
+  if (hard(res)) return res;
+  updateParticipant(id, seat, { dropped: 1 });
+  insertTurn({ meetingId: id, round, seat: "system", kind: "notice", text: `${seatWho(id, seat)}连续两次发言失败（${res.error ?? "未知错误"}），本场会议跳过它，其余 AI 继续讨论` });
+  notify(id);
+  return { ...res, dropped: true };
+}
+
+/** 被跳过之后不到 2 个 AI：会议停下来（出错状态），等主持人换 AI 后重试，或者终止。 */
+function tooFew(id: string): boolean {
+  const left = seatsOf(id);
+  if (left.length >= 2) return false;
+  const gone = getParticipants(id).filter((p) => p.dropped).map((p) => seatWho(id, p.seat)).join("、");
+  updateMeeting(id, { status: "error", error: `${gone}连续发言失败被跳过，只剩 ${left.length} 个 AI，会议停止。可以在“更多”里给它们换 AI 后点“重试”（会让被跳过的 AI 重新参会），或者终止会议。` });
+  notify(id);
+  return true;
+}
 
 function planFor(id: string) {
   const m = getMeeting(id) as MeetingRow;
@@ -181,10 +215,11 @@ async function step(id: string): Promise<void> {
   if (plan.type === "await_answers") { pause(id, "questions"); return; }
 
   if (plan.type === "ask" || plan.type === "opening") {
-    const results = await Promise.all(plan.seats.map((seat) => runTurn(id, seat, plan.type as TurnKind, plan.type === "ask" ? 0 : 1)));
+    const results = await Promise.all(plan.seats.map((seat) => runTurnRetry(id, seat, plan.type as TurnKind, plan.type === "ask" ? 0 : 1)));
     if (stoppedMeanwhile(id)) return;
-    const failed = results.find((x) => !x.ok);
+    const failed = results.find((x) => !x.ok && !x.dropped);
     if (failed) { failTurn(id, failed); return; }
+    if (tooFew(id)) return;
     if (plan.type === "ask") {
       if (planFor(id).type === "await_answers") pause(id, "questions");
       else continueNow(id);
@@ -197,8 +232,9 @@ async function step(id: string): Promise<void> {
   }
 
   if (plan.type === "write") {
-    const res = await runTurn(id, plan.seat, plan.kind, plan.round, plan.reason ?? null);
+    const res = await runTurnRetry(id, plan.seat, plan.kind, plan.round, plan.reason ?? null);
     if (stoppedMeanwhile(id)) return;
+    if (res.dropped) { if (!tooFew(id)) continueNow(id); return; } // 换下一位执笔
     if (!res.ok) { failTurn(id, res); return; }
     const fields: Partial<MeetingRow> = { next_writer: null };
     if (plan.kind === "final_write") fields.finalize_stage = "confirm";
@@ -208,10 +244,11 @@ async function step(id: string): Promise<void> {
   }
 
   // 其他参会者同时审阅 / 确认
-  const results = await Promise.all(plan.seats.map((seat) => runTurn(id, seat, plan.kind, plan.round, plan.reason ?? null)));
+  const results = await Promise.all(plan.seats.map((seat) => runTurnRetry(id, seat, plan.kind, plan.round, plan.reason ?? null)));
   if (stoppedMeanwhile(id)) return;
-  const failed = results.find((x) => !x.ok);
+  const failed = results.find((x) => !x.ok && !x.dropped);
   if (failed) { failTurn(id, failed); return; }
+  if (tooFew(id)) return;
 
   const turns = getTurns(id);
   const m = getMeeting(id) as MeetingRow;
@@ -254,7 +291,7 @@ function endMeeting(id: string, status: MeetingStatus, draft: DraftRecord | null
   notify(id);
 }
 
-interface TurnResult { ok: boolean; turnId?: number; error?: string; disconnected?: boolean; seat?: Seat }
+interface TurnResult { ok: boolean; turnId?: number; error?: string; disconnected?: boolean; seat?: Seat; dropped?: boolean }
 
 const RETRY_RE = /火爆|排队|额度|限流|频繁|繁忙|稍后再试|稍后重试|太多|上限|次数|拥挤|服务器忙|忙碌|busy|rate|limit|429|too many|overload/i;
 
@@ -302,7 +339,7 @@ async function runTurn(id: string, seat: Seat, kind: TurnKind, round: number, re
   const joining = !me.chat_id && kind !== "ask" && kind !== "opening";
   const ctx: BuildContext = {
     topic: m.topic, promptContent: m.prompt_content, me: infos[seat] as ParticipantInfo,
-    others: parts.filter((p) => p.seat !== seat).map((p) => infos[p.seat] as ParticipantInfo),
+    others: parts.filter((p) => p.seat !== seat && !p.dropped).map((p) => infos[p.seat] as ParticipantInfo),
     round, maxRounds: m.max_rounds, penMode: m.pen_mode,
     unseen: joining ? [] : turns.filter((t) => t.id > me.seen_upto && t.seat !== seat && (t.seat === "host" || isSeat(t.seat))),
     participants: infos, latestDraft: latest, hostAfterLatestDraft: latest ? hostAfter(turns, latest.turnId) : false,
@@ -414,6 +451,12 @@ export function runCommand(id: string, action: string, payload: Record<string, u
     case "continue": {
       if (ended) return { ok: false, error: "会议已经结束" };
       if (idle && m.pause_reason === "questions") return runCommand(id, "answer", { text: "" });
+      // 因为 AI 被跳过、人数不够而停下的：让被跳过的 AI 重新参会再试
+      if (idle && m.status === "error" && seats.length < 2) {
+        const back = getParticipants(id).filter((p) => p.dropped);
+        for (const p of back) updateParticipant(id, p.seat, { dropped: 0 });
+        if (back.length) insertTurn({ meetingId: id, round: m.current_round, seat: "system", kind: "notice", text: `主持人让${back.map((p) => seatWho(id, p.seat)).join("、")}重新参会` });
+      }
       if (idle) void advance(id);
       return { ok: true };
     }
@@ -512,7 +555,7 @@ export function runCommand(id: string, action: string, payload: Record<string, u
     }
     case "set_site": {
       // 给某个席位换 AI：新网站开一个新对话，第一次发言时把之前的会议记录一起发过去。
-      const seat = isSeat(payload.seat) && seats.includes(payload.seat) ? payload.seat : null;
+      const seat = isSeat(payload.seat) && allSeatsOf(id).includes(payload.seat) ? payload.seat : null;
       const site = isActiveSite(payload.site) ? payload.site : null;
       if (!seat || !site) return { ok: false, error: "请选择席位和网站" };
       if (r.running) return { ok: false, error: "请等这一轮发言结束再换 AI" };
@@ -520,8 +563,16 @@ export function runCommand(id: string, action: string, payload: Record<string, u
       const parts = getParticipants(id);
       if (parts.some((p) => p.site === site && p.seat !== seat)) return { ok: false, error: `${siteName(site)}已经在参会了` };
       const old = parts.find((p) => p.seat === seat) as ParticipantRow;
-      if (old.site === site) return { ok: true };
-      updateParticipant(id, seat, { site, chat_id: null, chat_url: null, seen_upto: 0, joined_round: m.current_round });
+      if (old.site === site) {
+        // 同一个网站：被跳过的让它重新参会（接着用原来的对话）
+        if (old.dropped) {
+          updateParticipant(id, seat, { dropped: 0 });
+          insertTurn({ meetingId: id, round: m.current_round, seat: "system", kind: "notice", text: `主持人让${seatWho(id, seat)}重新参会` });
+          notify(id);
+        }
+        return { ok: true };
+      }
+      updateParticipant(id, seat, { site, chat_id: null, chat_url: null, seen_upto: 0, joined_round: m.current_round, dropped: 0 });
       insertTurn({ meetingId: id, round: m.current_round, seat: "system", kind: "notice", text: `主持人把${SEAT_LABEL[seat]}从 ${siteName(old.site)} 换成 ${siteName(site)}（新对话，会把之前的会议记录发给它）` });
       notify(id);
       return { ok: true };

@@ -56,6 +56,8 @@ export interface ParticipantRow {
   chat_url: string | null;
   seen_upto: number;
   joined_round: number;
+  /** 1 = 连续两次发言失败，本场会议跳过它 */
+  dropped: number;
 }
 
 interface TurnRow {

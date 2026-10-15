@@ -6,7 +6,7 @@ export interface BridgeStatus { connected: boolean; name: string | null; version
 
 export interface MeetingSummary {
   id: string; title: string; status: string; pauseReason: string | null; currentRound: number; maxRounds: number;
-  participants: { seat: Seat; site: SiteId }[]; createdAt: number; updatedAt: number;
+  participants: { seat: Seat; site: SiteId; dropped?: boolean }[]; createdAt: number; updatedAt: number;
 }
 export interface TurnStatus { draftVersion: number | null; keyIssues: number | null; minorIssues: number | null; hostUnanswered: number | null; newPoints: boolean | null; agree: boolean | null; cannotContinue: boolean | null; cannotContinueReason: string | null }
 export interface Question { n: number; text: string; why: string; options: string[]; assumption: string }
@@ -23,7 +23,7 @@ export interface MeetingDetail {
   maxRounds: number; waitSeconds: number; status: string; pauseReason: string | null; pauseDetail: { message?: string } | null; currentRound: number;
   deadlineAt: number | null; finalizeStage: string | null; finalizeReason: string | null; pauseAfter: boolean; finalDraft: string | null; endNote: string | null;
   error: string | null; retryAt: number | null; elapsedMs: number; activeSince: number | null; createdAt: number; updatedAt: number;
-  participants: { seat: Seat; site: SiteId; name: string; chatId: string | null; chatUrl: string | null }[];
+  participants: { seat: Seat; site: SiteId; name: string; chatId: string | null; chatUrl: string | null; dropped?: boolean }[];
   turns: Turn[]; drafts: Draft[]; live: Live[]; running: boolean; estimate: { perSeat: number; total: number }; serverNow: number;
 }
 export interface Prompt { id: number; name: string; content: string; is_default: number; updated_at: number }

@@ -197,7 +197,7 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
           </div>
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          {meeting.participants.map((p) => <span key={p.seat} className={seatColor(p.seat).text}>{seatName(p.seat)}</span>)}
+          {meeting.participants.map((p) => <span key={p.seat} className={`${seatColor(p.seat).text} ${p.dropped ? "line-through opacity-60" : ""}`} title={p.dropped ? "连续两次发言失败，已跳过" : ""}>{seatName(p.seat)}{p.dropped ? "（已跳过）" : ""}</span>)}
           <span className="text-gray-500">{shownRound === 0 ? `提问环节（共 ${meeting.maxRounds} 轮）` : `第 ${shownRound}/${meeting.maxRounds} 轮`} · {meeting.penMode === "rotate" ? "轮流执笔" : `固定执笔（${SEAT_LABEL[meeting.penSeat]}）`}</span>
           <span className={`font-semibold ${STATUS_TEXT_CLS[meeting.status] ?? ""}`}>{statusInfo(meeting.status, meeting.pauseReason).text}</span>
         </div>
@@ -438,10 +438,11 @@ function AskList({ asks, answers, seatName }: { asks: Turn[]; answers: Record<st
 function MoreMenu({ meeting, ended, seatName, command, notify, onClose }: {
   meeting: MeetingDetail; ended: boolean; seatName: (s: Seat) => string; command: (a: string, p?: Record<string, unknown>) => Promise<boolean>; notify: Notify; onClose: () => void;
 }) {
-  const seats = meeting.participants.map((p) => p.seat);
+  const seats = meeting.participants.filter((p) => !p.dropped).map((p) => p.seat);
+  const dropped = meeting.participants.filter((p) => p.dropped);
   const free = ACTIVE_SITES.filter((s) => !meeting.participants.some((p) => p.site === s.id));
   const [rounds, setRounds] = useState(ended ? meeting.maxRounds + 2 : meeting.maxRounds);
-  const [swapSeat, setSwapSeat] = useState<Seat>(seats[0]);
+  const [swapSeat, setSwapSeat] = useState<Seat>(dropped[0]?.seat ?? seats[0]);
   const [swapSite, setSwapSite] = useState<string>(free[0]?.id ?? "");
   const item = "block w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800";
   const small = (on: boolean) => `rounded border px-2 py-0.5 text-xs ${on ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300" : "border-gray-300 dark:border-gray-600"}`;
@@ -476,11 +477,17 @@ function MoreMenu({ meeting, ended, seatName, command, notify, onClose }: {
             <button className={small(false)} onClick={async () => { if (await command("set_max_rounds", { maxRounds: rounds })) onClose(); }}>{ended ? "重新开启" : "改"}</button>
           </div>
         </div>
+        {!ended && dropped.length > 0 && (
+          <div className="px-3 py-1.5 text-sm">
+            <p className="mb-1 text-gray-500">被跳过的 AI（连续两次发言失败）</p>
+            <div className="flex flex-wrap gap-1">{dropped.map((p) => <button key={p.seat} className={small(false)} onClick={async () => { if (await command("set_site", { seat: p.seat, site: p.site })) onClose(); }}>让{seatName(p.seat)}重新参会</button>)}</div>
+          </div>
+        )}
         {!ended && free.length > 0 && (
           <div className="px-3 py-1.5 text-sm">
             <p className="mb-1 text-gray-500">给某个席位换 AI（新对话，会把之前的记录发给它）</p>
             <div className="flex flex-wrap items-center gap-1">
-              <select className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs dark:border-gray-600 dark:bg-gray-950" value={swapSeat} onChange={(e) => setSwapSeat(e.target.value as Seat)}>{seats.map((s) => <option key={s} value={s}>{seatName(s)}</option>)}</select>
+              <select className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs dark:border-gray-600 dark:bg-gray-950" value={swapSeat} onChange={(e) => setSwapSeat(e.target.value as Seat)}>{meeting.participants.map((p) => p.seat).map((s) => <option key={s} value={s}>{seatName(s)}</option>)}</select>
               换成
               <select className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs dark:border-gray-600 dark:bg-gray-950" value={swapSite} onChange={(e) => setSwapSite(e.target.value)}>{free.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
               <button className={small(false)} onClick={() => command("set_site", { seat: swapSeat, site: swapSite })}>换</button>

@@ -5,7 +5,7 @@
  *  会议   GET/POST /api/meetings · GET/DELETE /api/meetings/:id · POST /api/meetings/:id/command
  *         GET /api/meetings/:id/minutes（导出纪要） · GET /api/meeting-rules
  *  风格   GET/POST /api/prompts · PUT/DELETE /api/prompts/:id
- *  会话   GET /api/chats · GET /api/chats/site/:site · POST /api/chats/delete · POST /api/chats/open
+ *  对话   POST /api/chats/open（在浏览器里打开某个 AI 的对话）
  *  网站   POST /api/sites/:site/:action（open / focus / reload）
  *  设置   GET/PUT /api/settings · POST /api/settings/ext-token · POST /api/settings/password
  */
@@ -19,11 +19,11 @@ import { checkPassword, extToken, hasPassword, isLoggedIn, login, logout, noteFa
 import { bridge } from "./bridge.ts";
 import { addViewer } from "./events.ts";
 import { setSetting } from "./db.ts";
-import { isSite, SITE_IDS, siteName, type SiteId } from "./sites.ts";
+import { isSite, SITE_IDS } from "./sites.ts";
 import { deletePrompt, getPrompt, listPrompts, savePrompt } from "./prompts.ts";
 import { meetingRules, isSeat, ALL_SEATS } from "./meetings/protocol.ts";
 import { attachLines, broadcastList, createAndStart, getMeetingDetail, meetingSummary, runCommand, viewerLeft } from "./meetings/runner.ts";
-import { deleteMeeting, getMeeting, isEnded, listChats, listMeetings, markChatDeleted } from "./meetings/store.ts";
+import { deleteMeeting, getMeeting, isEnded, listMeetings } from "./meetings/store.ts";
 import { minutesMarkdown } from "./meetings/minutes.ts";
 
 type Body = Record<string, unknown>;
@@ -107,11 +107,9 @@ export function createApp(): Hono {
     const m = getMeeting(id);
     if (!m) return c.json({ error: "会议不存在" }, 404);
     if (!isEnded(m.status)) runCommand(id, "stop", {});
-    let chatResult: unknown = null;
-    if (c.req.query("deleteChats") === "1") chatResult = await deleteChats(listChats().filter((x) => x.meeting_id === id && !x.deleted_at).map((x) => ({ site: x.site, chatId: x.chat_id })));
     deleteMeeting(id);
     broadcastList();
-    return c.json({ ok: true, chats: chatResult });
+    return c.json({ ok: true }); // AI 网站上的对话不删
   });
   app.get("/api/meetings/:id/minutes", (c) => {
     const r = minutesMarkdown(c.req.param("id"));
@@ -131,30 +129,7 @@ export function createApp(): Hono {
   app.put("/api/prompts/:id", (c) => savePromptReq(c, Number(c.req.param("id"))));
   app.delete("/api/prompts/:id", (c) => { deletePrompt(Number(c.req.param("id"))); return c.json({ ok: true }); });
 
-  // ---- 会话管理
-  app.get("/api/chats", (c) => {
-    const meetings = new Map(listMeetings().map((m) => [m.id, m]));
-    return c.json({
-      chats: listChats().map((x) => ({ meetingId: x.meeting_id, meetingTitle: meetings.get(x.meeting_id)?.title ?? "", meetingStatus: meetings.get(x.meeting_id)?.status ?? "", site: x.site, siteName: siteName(x.site), chatId: x.chat_id, url: x.url, seat: x.seat, createdAt: x.created_at, deletedAt: x.deleted_at })),
-    });
-  });
-  app.get("/api/chats/site/:site", async (c) => {
-    const site = c.req.param("site");
-    if (!isSite(site)) return c.json({ error: "不认识的网站" }, 400);
-    const r = await bridge.call(site, "listChats", { max: Number(c.req.query("max") || 300) }, { timeoutMs: 180_000 });
-    if (!r.ok) return c.json({ error: r.data.error ?? "获取失败" }, 502);
-    const mine = new Map(listChats().filter((x) => x.site === site).map((x) => [x.chat_id, x]));
-    const titles = new Map(listMeetings().map((m) => [m.id, m.title]));
-    const list = ((r.data.list as { id: string }[]) || []).map((x) => ({ ...x, meetingId: mine.get(x.id)?.meeting_id ?? null, meetingTitle: titles.get(mine.get(x.id)?.meeting_id ?? "") ?? null }));
-    return c.json({ list, current: r.data.current ?? null });
-  });
-  app.post("/api/chats/delete", async (c) => {
-    const b = await body(c);
-    const items = (Array.isArray(b.items) ? b.items : []).filter((x: any) => x && isSite(x.site) && typeof x.chatId === "string") as { site: SiteId; chatId: string }[];
-    if (!items.length) return c.json({ error: "没有要删除的对话" }, 400);
-    if (busySites().some((s) => items.some((x) => x.site === s))) return c.json({ error: "会议正在用这个网站，等这一轮发言结束再删" }, 409);
-    return c.json(await deleteChats(items));
-  });
+  // ---- 在电脑的浏览器里打开某个 AI 的对话（会议页“更多”里用）
   app.post("/api/chats/open", async (c) => {
     const b = await body(c);
     if (!isSite(b.site) || typeof b.chatId !== "string") return c.json({ error: "参数不对" }, 400);
@@ -198,34 +173,6 @@ export function createApp(): Hono {
     app.get("/", (c) => c.text("网页还没构建：先运行 npm run build（见 README）"));
   }
   return app;
-}
-
-/** 正在发言的网站（不能同时去删它的对话）。 */
-function busySites(): string[] {
-  const out: string[] = [];
-  for (const m of listMeetings()) {
-    if (m.status !== "running") continue;
-    const d = getMeetingDetail(m.id);
-    for (const l of d?.live ?? []) out.push(l.site);
-  }
-  return out;
-}
-
-async function deleteChats(items: { site: string; chatId: string }[]) {
-  const bySite = new Map<string, string[]>();
-  for (const x of items) bySite.set(x.site, [...(bySite.get(x.site) || []), x.chatId]);
-  const results: { site: string; chatId: string; ok: boolean; error?: string }[] = [];
-  for (const [site, ids] of bySite) {
-    const r = await bridge.call(site as SiteId, "deleteChats", { ids }, { timeoutMs: 15 * 60_000 });
-    const per = new Map(((r.data.results as { id: string; ok: boolean; error?: string }[]) || []).map((x) => [x.id, x]));
-    for (const id of ids) {
-      const x = per.get(id);
-      const ok = !!x?.ok;
-      if (ok) markChatDeleted(site, id);
-      results.push({ site, chatId: id, ok, error: ok ? undefined : x?.error ?? r.data.error });
-    }
-  }
-  return { ok: results.every((x) => x.ok), deleted: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length, results };
 }
 
 export { SITE_IDS, ALL_SEATS };

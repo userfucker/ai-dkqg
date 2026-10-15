@@ -3,10 +3,9 @@ import { Link, NavLink, Route, Routes, useLocation, useMatch, useNavigate } from
 import { api } from "./api.ts";
 import { useEvents, useTitleFlash } from "./events.ts";
 import { Button, Card, inputCls, SiteDot, StatusBadge, Toast } from "./components/ui.tsx";
-import { needsHost, SEAT_LABEL, bj } from "./util.ts";
+import { needsHost, bj } from "./util.ts";
 import NewMeeting from "./pages/NewMeeting.tsx";
 import MeetingView from "./pages/MeetingView.tsx";
-import Chats from "./pages/Chats.tsx";
 import Settings from "./pages/Settings.tsx";
 import type { BridgeStatus, MeetingSummary } from "./types.ts";
 
@@ -77,7 +76,6 @@ function Shell({ onLogout }: { onLogout: () => void }) {
             <Route path="/" element={<Empty />} />
             <Route path="/new" element={<NewMeeting key={loc.search} notify={notify} bridge={ev.bridge} />} />
             <Route path="/m/:id" element={<MeetingView detail={ev.detail} serverNow={ev.serverNow} notify={notify} bridge={ev.bridge} />} />
-            <Route path="/chats" element={<Chats notify={notify} bridge={ev.bridge} />} />
             <Route path="/settings" element={<Settings notify={notify} bridge={ev.bridge} onLogout={onLogout} />} />
           </Routes>
         </main>
@@ -93,7 +91,6 @@ function TopBar({ bridge, online, onLogout: _ }: { bridge: BridgeStatus | null; 
     <header className="flex items-center gap-1 border-b border-zinc-200 bg-white px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] dark:border-zinc-800 dark:bg-zinc-900">
       <Link to="/" className="mr-2 font-semibold">AI 会议</Link>
       <NavLink to="/" end className={({ isActive }) => nav({ isActive: isActive || location.pathname.startsWith("/m/") })}>会议</NavLink>
-      <NavLink to="/chats" className={nav}>会话</NavLink>
       <NavLink to="/settings" className={nav}>设置</NavLink>
       <Link to="/settings" className="ml-auto flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" title="插件连接状态">
         <span className={`h-2 w-2 rounded-full ${!online ? "bg-zinc-400" : bridge?.connected ? "bg-green-500" : "bg-red-500"}`} />
@@ -140,7 +137,7 @@ function MeetingList({ meetings, currentId, notify }: { meetings: MeetingSummary
               <StatusBadge status={m.status} pauseReason={m.pauseReason} />
             </div>
             <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
-              {m.participants.map((p) => <span key={p.seat} className="flex items-center gap-0.5"><SiteDot site={p.site} size={7} />{SEAT_LABEL[p.seat]}</span>)}
+              {m.participants.map((p) => <span key={p.seat} className={`flex items-center gap-0.5 ${p.dropped ? "line-through opacity-60" : ""}`} title={p.dropped ? "已跳过" : ""}><SiteDot site={p.site} size={7} />{p.site}</span>)}
               <span className="ml-auto">{m.currentRound > 0 ? `第 ${m.currentRound}/${m.maxRounds} 轮 · ` : ""}{bj(m.createdAt)}</span>
             </div>
           </Link>

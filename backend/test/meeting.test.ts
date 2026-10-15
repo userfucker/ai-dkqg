@@ -6,6 +6,7 @@ import type { Server, AddressInfo } from "node:net";
 import WebSocket from "ws";
 import { useMemoryDb, setSetting } from "../src/db.ts";
 useMemoryDb();
+process.env.AID_RETRY_DELAY_MS = "20"; // 发言失败后重试不用等 5 秒
 const { createApp } = await import("../src/app.ts");
 const { bridge } = await import("../src/bridge.ts");
 const { extToken } = await import("../src/auth.ts");
@@ -16,6 +17,8 @@ let server: Server, port = 0;
 const log: { site: string; cmd: string; args: any }[] = [];
 const current: Record<string, string | null> = {};
 let chatSeq = 0;
+/** 这些网站的发言一律失败（测试“重试一次 → 跳过”） */
+const failing = new Set<string>();
 
 const st = (agree: boolean, key: number) => `<会议状态>\n合并稿版本：v1\n关键问题：${key}\n次要问题：0\n主持人要求未回应：0\n新论点：有\n是否同意定稿：${agree ? "是" : "否"}\n无法继续：否\n</会议状态>`;
 function fakeAI(text: string, files: { content: string }[] = []): string {
@@ -49,6 +52,7 @@ function connectExt(): Promise<void> {
       if (m.cmd === "openChat") { current[m.site] = m.args.chatId; return reply({ ok: true }); }
       if (m.cmd === "stop") return reply({ ok: true });
       if (m.cmd === "ask") {
+        if (failing.has(m.site)) return reply({ ok: false, error: "网页出错了（测试）" }, false);
         if (m.args.newChat) current[m.site] = `${m.site}-chat-${++chatSeq}`;
         const answer = fakeAI(m.args.text, m.args.files);
         ws.send(JSON.stringify({ type: "progress", id: m.id, site: m.site, answer: answer.slice(0, 5), thinkingLen: 3, done: false }));
@@ -131,4 +135,38 @@ test("插件断开：会议暂停，重新连上后自动继续；主持人终�
   assert.match(writer.args.text + (writer.args.files?.[0]?.content ?? ""), /请聚焦成本/);
   assert.deepEqual(runCommand(id, "stop", {}), { ok: true });
   assert.equal(getMeetingDetail(id)?.status, "stopped");
+});
+
+test("一个 AI 连续两次失败：跳过它，另外两个接着开到一致", async () => {
+  failing.clear(); failing.add("glm");
+  const before = log.length;
+  const r = createAndStart({ topic: "跳过测试", promptId: null, promptName: null, promptContent: "", participants: ["deepseek", "kimi", "glm"], penMode: "rotate", penSeat: "A", maxRounds: 6, waitSeconds: 0 });
+  assert.ok(r.ok, (r as any).error);
+  const id = (r as { id: string }).id;
+  await waitFor(() => getMeetingDetail(id)?.pauseReason === "questions");
+  // 提问时 glm 试了两次
+  assert.equal(log.slice(before).filter((x) => x.cmd === "ask" && x.site === "glm").length, 2);
+  assert.equal(getMeetingDetail(id)!.participants.find((p) => p.site === "glm")?.dropped, true);
+  assert.ok(getMeetingDetail(id)!.turns.some((t) => t.kind === "notice" && /连续两次发言失败/.test(t.text)));
+  runCommand(id, "answer", { text: "" });
+  await waitFor(() => ["consensus", "error", "max_rounds", "stopped"].includes(getMeetingDetail(id)!.status));
+  const d = getMeetingDetail(id)!;
+  assert.equal(d.status, "consensus", d.error ?? "");
+  // 被跳过以后不再找 glm
+  assert.equal(log.slice(before).filter((x) => x.cmd === "ask" && x.site === "glm").length, 2);
+  failing.clear();
+});
+
+test("两个 AI 都失败：会议停下等主持人；“重试”让它们重新参会", async () => {
+  failing.clear(); failing.add("glm"); failing.add("kimi");
+  const r = createAndStart({ topic: "都失败", promptId: null, promptName: null, promptContent: "", participants: ["deepseek", "kimi", "glm"], penMode: "rotate", penSeat: "A", maxRounds: 6, waitSeconds: 0 });
+  assert.ok(r.ok, (r as any).error);
+  const id = (r as { id: string }).id;
+  await waitFor(() => getMeetingDetail(id)?.status === "error");
+  assert.match(getMeetingDetail(id)!.error ?? "", /只剩 1 个 AI/);
+  failing.clear();
+  assert.deepEqual(runCommand(id, "continue", {}), { ok: true });
+  await waitFor(() => getMeetingDetail(id)?.pauseReason === "questions");
+  assert.ok(getMeetingDetail(id)!.participants.every((p) => !p.dropped));
+  runCommand(id, "stop", {});
 });

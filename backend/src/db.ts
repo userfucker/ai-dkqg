@@ -112,6 +112,9 @@ function migrate(d: Database.Database): void {
   // 后加的列（旧数据库补上）
   const cols = (d.prepare(`PRAGMA table_info(meeting_turns)`).all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("meta_json")) d.exec(`ALTER TABLE meeting_turns ADD COLUMN meta_json TEXT`);
+  // 连续两次发言失败被跳过的参会者（2026-10-15）
+  const pcols = (d.prepare(`PRAGMA table_info(meeting_participants)`).all() as { name: string }[]).map((c) => c.name);
+  if (!pcols.includes("dropped")) d.exec(`ALTER TABLE meeting_participants ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0`);
 }
 
 export function getSetting(key: string): string | null {
