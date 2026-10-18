@@ -1,5 +1,5 @@
 export type Seat = "A" | "B" | "C" | "D";
-export type SiteId = "deepseek" | "glm" | "kimi" | "qwen";
+export type SiteId = "deepseek" | "glm" | "kimi" | "qwen" | "doubao";
 
 export interface SiteState { site: SiteId; name: string; open: boolean; ready: boolean; url?: string; chatId?: string; title?: string }
 export interface BridgeStatus { connected: boolean; name: string | null; version: string | null; since: number | null; sites: SiteState[] }

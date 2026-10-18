@@ -103,8 +103,8 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
         </Card>
 
         <Card className="space-y-3 p-4">
-          <div className="text-sm font-medium">参会的 AI <span className="font-normal text-zinc-500">（2～3 个，按点选顺序排成甲乙丙）</span></div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="text-sm font-medium">参会的 AI <span className="font-normal text-zinc-500">（2～4 个，按点选顺序排成甲乙丙丁）</span></div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {ACTIVE_SITES.map((s) => {
               const i = order.indexOf(s.id);
               const st = site(s.id);

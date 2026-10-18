@@ -2,12 +2,12 @@ import type { Seat, SiteId } from "./types.ts";
 
 export const SEAT_LABEL: Record<Seat, string> = { A: "甲", B: "乙", C: "丙", D: "丁" };
 export const SITES: { id: SiteId; name: string }[] = [
-  { id: "deepseek", name: "DeepSeek" }, { id: "glm", name: "智谱清言" }, { id: "kimi", name: "Kimi" }, { id: "qwen", name: "千问" },
+  { id: "deepseek", name: "DeepSeek" }, { id: "glm", name: "智谱清言" }, { id: "kimi", name: "Kimi" }, { id: "doubao", name: "豆包" }, { id: "qwen", name: "千问" },
 ];
 /** 能参会的网站（千问已停用：消息超过一万多字就用不了） */
 export const ACTIVE_SITES = SITES.filter((s) => s.id !== "qwen");
 export const siteName = (s: string | null | undefined) => SITES.find((x) => x.id === s)?.name ?? s ?? "";
-export const SITE_COLOR: Record<string, string> = { deepseek: "#4d6bfe", glm: "#10b981", kimi: "#f59e0b", qwen: "#7c3aed" };
+export const SITE_COLOR: Record<string, string> = { deepseek: "#4d6bfe", glm: "#10b981", kimi: "#f59e0b", qwen: "#7c3aed", doubao: "#0891b2" };
 
 /** 会议状态：文字 + 颜色（tailwind 类） */
 export function statusInfo(status: string, pauseReason?: string | null): { text: string; cls: string; ended: boolean } {
@@ -70,6 +70,7 @@ export const SITE_CLS: Record<string, { text: string; border: string; bg: string
   deepseek: { text: "text-blue-700 dark:text-blue-400", border: "border-blue-300 dark:border-blue-800", bg: "bg-blue-500" },
   glm: { text: "text-emerald-700 dark:text-emerald-400", border: "border-emerald-300 dark:border-emerald-800", bg: "bg-emerald-500" },
   kimi: { text: "text-orange-600 dark:text-orange-400", border: "border-orange-300 dark:border-orange-800", bg: "bg-orange-500" },
+  doubao: { text: "text-cyan-700 dark:text-cyan-400", border: "border-cyan-300 dark:border-cyan-800", bg: "bg-cyan-600" },
   qwen: { text: "text-violet-700 dark:text-violet-400", border: "border-violet-300 dark:border-violet-800", bg: "bg-violet-500" },
 };
 export const siteCls = (site: string | null | undefined) => SITE_CLS[site ?? ""] ?? { text: "text-zinc-700", border: "border-zinc-300", bg: "bg-zinc-400" };
