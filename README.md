@@ -69,6 +69,8 @@ journalctl -u ai-dkqg -f                           # 看日志
 
 ### OpenWrt：Docker 容器 ubuntu22（pm2，和 webui 一样）
 
+> 完整步骤（含 socat 端口转发，容器只映射了 3000 端口时用）见 [docs/openwrt-docker.md](docs/openwrt-docker.md)。
+
 ```bash
 docker exec -it ubuntu22 bash
 # 容器里：按上面装好 Node、取代码、npm run setup，然后
