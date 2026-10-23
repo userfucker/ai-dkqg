@@ -11,6 +11,7 @@
  * 出错：插件断开 → 暂停，插件重新连上后自动继续；网站说限流 / 额度用完 / 太忙 → 暂停，10 分钟后自动重试；
  * 其他错误 → 停在“出错”，主持人可以重试或给这个席位换 AI。
  */
+import { topicAttachments, topicForAI } from "../uploads.ts";
 import { randomUUID } from "node:crypto";
 import { bridge, type Progress } from "../bridge.ts";
 import { broadcastAll, broadcastMeeting, viewerCount } from "../events.ts";
@@ -338,7 +339,7 @@ async function runTurn(id: string, seat: Seat, kind: TurnKind, round: number, re
   // 换了 AI 的席位（对话是新的）：把之前的会议记录一起发过去
   const joining = !me.chat_id && kind !== "ask" && kind !== "opening";
   const ctx: BuildContext = {
-    topic: m.topic, promptContent: m.prompt_content, me: infos[seat] as ParticipantInfo,
+    topic: topicForAI(m.topic), promptContent: m.prompt_content, me: infos[seat] as ParticipantInfo,
     others: parts.filter((p) => p.seat !== seat && !p.dropped).map((p) => infos[p.seat] as ParticipantInfo),
     round, maxRounds: m.max_rounds, penMode: m.pen_mode,
     unseen: joining ? [] : turns.filter((t) => t.id > me.seen_upto && t.seat !== seat && (t.seat === "host" || isSeat(t.seat))),
@@ -356,12 +357,15 @@ async function runTurn(id: string, seat: Seat, kind: TurnKind, round: number, re
     : buildWriteMessage(ctx);
   const fileName = `第${round}轮-${SEAT_LABEL[seat]}-${KIND_FILE[kind] ?? "材料"}.txt`;
   const msg = packMessage(built, fileName);
+  // 议题里上传的文件：这位 AI 第一次发言（新对话）时原格式一起发过去，之后它在对话里记得
+  const uploads = !me.chat_id ? topicAttachments(m.topic) : [];
+  const sendFiles: AskFile[] = [...msg.files, ...uploads];
 
   const r = rt(id);
   r.live.set(seat, { seat, site: me.site, kind, round, text: "", thinkingLen: 0, startedAt: Date.now(), attach: msg.attach });
   notify(id);
   const t0 = Date.now();
-  const res = await askAI(me, msg.text, msg.files, (p) => {
+  const res = await askAI(me, msg.text, sendFiles, (p) => {
     const live = r.live.get(seat);
     if (!live) return;
     live.text = p.answer;
@@ -390,7 +394,8 @@ async function runTurn(id: string, seat: Seat, kind: TurnKind, round: number, re
 }
 
 /** 让插件在这位参会者的对话里发消息、等回答。第一次发言新建对话。 */
-async function askAI(p: ParticipantRow, text: string, files: { name: string; content: string }[], onProgress: (p: Progress) => void): Promise<{ ok: boolean; answer: string; thinkingLen: number; chatId?: string; url?: string; error?: string; disconnected?: boolean }> {
+type AskFile = { name: string; content: string } | { name: string; b64: string; mime: string };
+async function askAI(p: ParticipantRow, text: string, files: AskFile[], onProgress: (p: Progress) => void): Promise<{ ok: boolean; answer: string; thinkingLen: number; chatId?: string; url?: string; error?: string; disconnected?: boolean }> {
   const site = p.site as SiteId;
   const fail = (d: { error?: string; disconnected?: boolean }) => ({ ok: false, answer: "", thinkingLen: 0, error: d.error ?? "插件没有说原因", disconnected: !!d.disconnected });
   if (p.chat_id) {

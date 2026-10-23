@@ -7,6 +7,7 @@
  *  风格   GET/POST /api/prompts · PUT/DELETE /api/prompts/:id
  *  对话   POST /api/chats/open（在浏览器里打开某个 AI 的对话）
  *  网站   POST /api/sites/:site/:action（open / focus / reload）
+ *  文件   POST /api/uploads?draft=&name=（议题里上传，原始内容）· GET/DELETE /api/uploads/<路径>
  *  设置   GET/PUT /api/settings · POST /api/settings/ext-token · POST /api/settings/password
  */
 import { Hono } from "hono";
@@ -25,6 +26,7 @@ import { meetingRules, isSeat, ALL_SEATS } from "./meetings/protocol.ts";
 import { attachLines, broadcastList, createAndStart, getMeetingDetail, meetingSummary, runCommand, viewerLeft } from "./meetings/runner.ts";
 import { deleteMeeting, getMeeting, isEnded, listMeetings } from "./meetings/store.ts";
 import { minutesMarkdown } from "./meetings/minutes.ts";
+import { deleteTopicUploads, deleteUpload, mimeOf, saveUpload, topicFiles, uploadMaxMb, uploadPath } from "./uploads.ts";
 
 type Body = Record<string, unknown>;
 const body = async (c: { req: { json: () => Promise<unknown> } }): Promise<Body> => { try { return ((await c.req.json()) as Body) || {}; } catch { return {}; } };
@@ -56,7 +58,7 @@ export function createApp(): Hono {
   app.use("/api/*", async (c, next) => (c.req.path.startsWith("/api/auth/") ? next() : requireAuth(c, next)));
 
   // ---- 状态 / 实时推送
-  app.get("/api/status", (c) => c.json({ version: VERSION, bridge: bridge.status(), attachLines: attachLines() }));
+  app.get("/api/status", (c) => c.json({ version: VERSION, bridge: bridge.status(), attachLines: attachLines(), uploadMaxMb: uploadMaxMb() }));
   app.get("/api/events", (c) =>
     streamSSE(c, async (stream) => {
       const meetingId = c.req.query("meeting") || null;
@@ -107,6 +109,9 @@ export function createApp(): Hono {
     const m = getMeeting(id);
     if (!m) return c.json({ error: "会议不存在" }, 404);
     if (!isEnded(m.status)) runCommand(id, "stop", {});
+    // 议题里上传的文件一起删（“重新讨论”的会议还在用的不删）
+    const still = new Set(listMeetings().filter((x) => x.id !== id).flatMap((x) => topicFiles(getMeeting(x.id)?.topic ?? "").map((f) => f.rel)));
+    if (!topicFiles(m.topic).some((f) => still.has(f.rel))) deleteTopicUploads(m.topic);
     deleteMeeting(id);
     broadcastList();
     return c.json({ ok: true }); // AI 网站上的对话不删
@@ -115,6 +120,25 @@ export function createApp(): Hono {
     const r = minutesMarkdown(c.req.param("id"));
     if (!r) return c.json({ error: "会议不存在" }, 404);
     return c.body(r.text, 200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(r.name)}` });
+  });
+
+  // ---- 议题里上传的文件
+  app.post("/api/uploads", async (c) => {
+    const buf = Buffer.from(await c.req.arrayBuffer());
+    const r = saveUpload(c.req.query("draft") ?? "", c.req.query("name") ?? "文件", buf);
+    return r.ok ? c.json(r) : c.json({ error: r.error }, 400);
+  });
+  app.get("/api/uploads/*", (c) => {
+    const rel = decodeURIComponent(c.req.path.slice("/api/".length));
+    const abs = uploadPath(rel);
+    if (!abs || !existsSync(abs)) return c.json({ error: "文件不存在（可能已经删了）" }, 404);
+    const name = rel.split("/").pop() ?? "文件", mime = mimeOf(name);
+    const inline = /^(image\/|text\/|application\/pdf|application\/json)/.test(mime);
+    return c.body(readFileSync(abs), 200, { "content-type": mime, "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(name)}`, "cache-control": "no-cache" });
+  });
+  app.delete("/api/uploads/*", (c) => {
+    const rel = decodeURIComponent(c.req.path.slice("/api/".length));
+    return deleteUpload(rel) ? c.json({ ok: true }) : c.json({ error: "文件不存在" }, 404);
   });
 
   // ---- 会议风格提示词
@@ -145,12 +169,19 @@ export function createApp(): Hono {
   });
 
   // ---- 设置
-  app.get("/api/settings", (c) => c.json({ attachLines: attachLines(), extToken: extToken(), version: VERSION }));
+  app.get("/api/settings", (c) => c.json({ attachLines: attachLines(), uploadMaxMb: uploadMaxMb(), extToken: extToken(), version: VERSION }));
   app.put("/api/settings", async (c) => {
     const b = await body(c);
-    const n = Number(b.attachLines);
-    if (!Number.isInteger(n) || n < 10 || n > 100000) return c.json({ error: "行数要在 10 到 100000 之间" }, 400);
-    setSetting("attach_lines", String(n));
+    if (b.attachLines !== undefined) {
+      const n = Number(b.attachLines);
+      if (!Number.isInteger(n) || n < 10 || n > 100000) return c.json({ error: "行数要在 10 到 100000 之间" }, 400);
+      setSetting("attach_lines", String(n));
+    }
+    if (b.uploadMaxMb !== undefined) {
+      const mb = Number(b.uploadMaxMb);
+      if (!(mb > 0 && mb <= 100)) return c.json({ error: "上传文件上限要在 0～100 MB 之间" }, 400);
+      setSetting("upload_max_mb", String(mb));
+    }
     return c.json({ ok: true });
   });
   app.post("/api/settings/ext-token", (c) => c.json({ extToken: regenerateExtToken() }));

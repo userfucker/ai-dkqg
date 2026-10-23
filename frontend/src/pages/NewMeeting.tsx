@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api.ts";
 import { usePasteFold } from "../pasteFold.ts";
@@ -22,6 +22,35 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
   const [wait, setWait] = useState(0);
   const [busy, setBusy] = useState(false);
   const fold = usePasteFold(topic, setTopic);
+  // 议题里上传文件（和 webui 一样：上传后在议题里加一行“查看 uploads/… 文件”；开会时第一轮原格式发给每个 AI）
+  const draft = useRef(Math.random().toString(36).slice(2, 10) + Date.now().toString(36));
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(0);
+  const [maxMb, setMaxMb] = useState(2);
+  useEffect(() => { api<{ uploadMaxMb: number }>("/api/settings").then((r) => setMaxMb(r.uploadMaxMb || 2)).catch(() => {}); }, []);
+  const files = [...topic.matchAll(/^查看 (uploads\/[^\n]+?) 文件$/gm)].map((m) => m[1]);
+  const uploadOne = async (f: File) => {
+    if (f.size > maxMb * 1024 * 1024) return notify(`${f.name} 太大：${(f.size / 1024 / 1024).toFixed(1)} MB，上限 ${maxMb} MB（可以在“设置”里改）`, true);
+    setUploading((n) => n + 1);
+    try {
+      const res = await fetch(`/api/uploads?draft=${draft.current}&name=${encodeURIComponent(f.name || "文件")}`, { method: "POST", body: f, credentials: "same-origin" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || `上传失败（${res.status}）`);
+      const line = `查看 ${d.path} 文件`;
+      setTopic((t) => (t ? `${t.replace(/\n+$/, "")}\n${line}` : line));
+    } catch (e) { notify(`${f.name}：${(e as Error).message}`, true); }
+    finally { setUploading((n) => n - 1); }
+  };
+  const uploadAll = async (list: FileList | File[]) => { for (const f of [...list]) await uploadOne(f); };
+  const removeFile = async (rel: string) => {
+    try { await api(`/api/${rel.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }); } catch { /* 已经没了也从议题里去掉 */ }
+    setTopic((t) => t.split("\n").filter((l) => l !== `查看 ${rel} 文件`).join("\n"));
+  };
+  const onPasteTopic = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pics = [...(e.clipboardData?.files ?? [])];
+    if (pics.length) { e.preventDefault(); void uploadAll(pics.map((f, i) => (/^image\.(png|jpe?g|gif|webp)$/i.test(f.name) || !f.name ? new File([f], `粘贴的图片-${Date.now()}-${i + 1}.${(f.type.split("/")[1] || "png").replace("jpeg", "jpg")}`, { type: f.type }) : f))); return; }
+    fold.onPaste(e);
+  };
 
   // 重新讨论（会议列表右键）：/new?from=<会议 id>，把那场会议的议题和设置带过来，只需要重新选 AI
   const [params] = useSearchParams();
@@ -83,7 +112,24 @@ export default function NewMeeting({ notify, bridge }: { notify: Notify; bridge:
         )}
         <Card className="space-y-3 p-4">
           <label className="block text-sm font-medium">议题</label>
-          <textarea className={`${inputCls} min-h-36`} placeholder="要讨论的问题、背景、要求……很长也没关系（大段粘贴会自动折叠；超过设置的行数会用 txt 附件发给 AI）" value={topic} onChange={(e) => setTopic(e.target.value)} onPaste={fold.onPaste} />
+          <textarea className={`${inputCls} min-h-36`} placeholder="要讨论的问题、背景、要求……很长也没关系（大段粘贴会自动折叠；超过设置的行数会用 txt 附件发给 AI）" value={topic} onChange={(e) => setTopic(e.target.value)} onPaste={onPasteTopic}
+            onDragOver={(e) => e.preventDefault()} onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); void uploadAll(e.dataTransfer.files); } }} />
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <Button className="min-h-8" onClick={() => fileInput.current?.click()} disabled={uploading > 0}>{uploading ? `上传中（${uploading}）…` : "上传文件"}</Button>
+            <span className="text-xs text-zinc-500">图片、txt、PDF、Word、Excel 等都可以（也可以拖进议题框、粘贴截图），每个不超过 {maxMb} MB；开会时第一轮原格式发给每个 AI</span>
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => { if (e.target.files) void uploadAll(e.target.files); e.target.value = ""; }} />
+          </div>
+          {files.length > 0 && (
+            <ul className="space-y-1 rounded-lg border border-zinc-200 p-2 text-sm dark:border-zinc-800">
+              {files.map((rel) => (
+                <li key={rel} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate" title={rel}>📎 {rel.split("/").pop()}</span>
+                  <a className="text-blue-600 hover:underline" href={`/api/${rel.split("/").map(encodeURIComponent).join("/")}`} target="_blank" rel="noreferrer">预览</a>
+                  <button type="button" className="text-red-600 hover:underline" onClick={() => void removeFile(rel)}>删除</button>
+                </li>
+              ))}
+            </ul>
+          )}
           {fold.folded > 0 && (
             <p className="-mt-1 text-xs text-zinc-500">已折叠 {fold.folded} 段粘贴内容，开会时会还原成原文。<button type="button" className="text-blue-600 hover:underline" onClick={() => setTopic(fold.resolve(topic))}>展开</button></p>
           )}

@@ -6,9 +6,10 @@ import type { BridgeStatus, Prompt } from "../types.ts";
 import type { Notify } from "../App.tsx";
 
 export default function Settings({ notify, bridge, onLogout }: { notify: Notify; bridge: BridgeStatus | null; onLogout: () => void }) {
-  const [s, setS] = useState<{ attachLines: number; extToken: string; version: string } | null>(null);
+  const [s, setS] = useState<{ attachLines: number; uploadMaxMb?: number; extToken: string; version: string } | null>(null);
   const [lines, setLines] = useState(100);
-  useEffect(() => { api("/api/settings").then((r) => { setS(r); setLines(r.attachLines); }).catch((e) => notify(e.message, true)); }, [notify]);
+  const [maxMb, setMaxMb] = useState(2);
+  useEffect(() => { api("/api/settings").then((r) => { setS(r); setLines(r.attachLines); setMaxMb(r.uploadMaxMb || 2); }).catch((e) => notify(e.message, true)); }, [notify]);
   const site = async (id: string, action: string) => { try { await api(`/api/sites/${id}/${action}`, { body: {} }); notify("好了"); } catch (e) { notify((e as Error).message, true); } };
   const port = location.port || (location.protocol === "https:" ? "443" : "80");
   return (
@@ -53,6 +54,12 @@ export default function Settings({ notify, bridge, onLogout }: { notify: Notify;
             <input type="number" className={`${inputCls} w-24 py-1`} min={10} value={lines} onChange={(e) => setLines(Number(e.target.value))} />
             行，就把材料放进 txt 附件上传
             <Button className="min-h-8" onClick={async () => { try { await api("/api/settings", { method: "PUT", body: { attachLines: lines } }); notify("已保存"); } catch (e) { notify((e as Error).message, true); } }}>保存</Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            议题里上传的文件，每个不超过
+            <input type="number" className={`${inputCls} w-24 py-1`} min={0.1} step={0.5} value={maxMb} onChange={(e) => setMaxMb(Number(e.target.value))} />
+            MB
+            <Button className="min-h-8" onClick={async () => { try { await api("/api/settings", { method: "PUT", body: { uploadMaxMb: maxMb } }); notify("已保存"); } catch (e) { notify((e as Error).message, true); } }}>保存</Button>
           </div>
         </Card>
 

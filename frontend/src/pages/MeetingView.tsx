@@ -211,7 +211,7 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
             <>
               <details className="rounded border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
                 <summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-300">议题（点击展开全文，共 {meeting.topic.length} 字）</summary>
-                <p className="mt-2 whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">{meeting.topic}</p>
+                <p className="mt-2 whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200"><TopicText text={meeting.topic} /></p>
               </details>
               <QuestionsPanel asks={askTurns} seatName={seatName} onSubmit={(body) => command("answer", body)} />
             </>
@@ -231,7 +231,7 @@ export default function MeetingView({ detail: meeting, serverNow, notify, bridge
                   : showTopic ? (
                     <div>
                       <div className="mb-3 text-sm text-gray-500">会议风格：{meeting.promptName ?? "不用风格提示词"} · 共 {meeting.topic.length} 字 / {meeting.topic.split("\n").length} 行</div>
-                      <p className="whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">{meeting.topic}</p>
+                      <p className="whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200"><TopicText text={meeting.topic} /></p>
                       {!latest && <p className="mt-4 text-sm text-gray-500">开始前各位 AI 会先向你提问（有问题时会议停下来等你回答）；第 1 轮各自独立陈述观点，第 2 轮起执笔人把大家的观点合并成合并稿，显示在这里。</p>}
                     </div>
                   ) : diff ? (
@@ -500,4 +500,10 @@ function MoreMenu({ meeting, ended, seatName, command, notify, onClose }: {
       </div>
     </>
   );
+}
+
+/** 议题：上传的文件那一行（查看 uploads/… 文件）变成可以点开的链接 */
+function TopicText({ text }: { text: string }) {
+  const parts = text.split(/^(查看 uploads\/[^\n]+? 文件)$/m);
+  return <>{parts.map((p, i) => { const m = /^查看 (uploads\/[^\n]+?) 文件$/.exec(p); return m ? <a key={i} className="text-blue-600 hover:underline" href={`/api/${m[1].split("/").map(encodeURIComponent).join("/")}`} target="_blank" rel="noreferrer">查看 {m[1]} 文件</a> : <span key={i}>{p}</span>; })}</>;
 }
